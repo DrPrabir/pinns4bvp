@@ -39,6 +39,8 @@ dependencies = [
 
 [project.optional-dependencies]
 test = ["pytest>=7.4"]
+pinn = ["torch"]
+dev = ["pytest>=7.4", "torch"]
 
 [tool.setuptools.packages.find]
 include = ["pinns4bvp*"]
