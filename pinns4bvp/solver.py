@@ -13,6 +13,8 @@ from pinns4bvp.solution import BVPSolution
 def solve(
     problem: BVPProblem,
     *,
+    method: str = "collocation",
+    pinn_config=None,
     mesh: np.ndarray | None = None,
     n_mesh: int = 50,
     mesh_kind: str = "uniform",
@@ -23,9 +25,26 @@ def solve(
     verbose: int = 0,
     raise_on_failure: bool = False,
 ) -> BVPSolution:
-    """Solve a :class:`BVPProblem` and return a backend-independent solution."""
+    """Solve a :class:`BVPProblem` with a selected backend.
+
+    ``method='collocation'`` preserves the v0.1 SciPy behavior.
+    ``method='pinn'`` activates the optional PyTorch backend.
+    """
+
     if not isinstance(problem, BVPProblem):
         raise TypeError("problem must be an instance of BVPProblem")
+
+    method = method.lower()
+    if method in {"pinn", "torch"}:
+        from pinns4bvp.backends.pinn_backend import solve_with_pinn
+
+        solution = solve_with_pinn(problem, config=pinn_config)
+        if raise_on_failure and not solution.success:
+            raise RuntimeError(solution.summary())
+        return solution
+
+    if method not in {"collocation", "scipy"}:
+        raise ValueError("method must be 'collocation'/'scipy' or 'pinn'")
 
     if mesh is None:
         x = create_initial_mesh(problem.domain, n_mesh, kind=mesh_kind)
@@ -33,7 +52,6 @@ def solve(
         x = validate_mesh(mesh, problem.domain)
 
     y0 = create_initial_guess(problem, x, guess)
-
     raw = solve_with_scipy(
         problem,
         x,
@@ -44,15 +62,14 @@ def solve(
         verbose=verbose,
     )
     report = build_convergence_report(problem, raw)
-
     solution = BVPSolution(
         problem=problem,
         x=np.asarray(raw.x),
         y=np.asarray(raw.y),
         diagnostics=report,
         _raw_solution=raw,
+        metadata={"backend": "scipy"},
     )
-
     if raise_on_failure and not solution.success:
         raise RuntimeError(solution.summary())
     return solution

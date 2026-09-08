@@ -14,16 +14,10 @@ BCFunction = Callable[[Array, Array, Mapping[str, float]], Array]
 class BVPProblem:
     """Mathematical definition of a two-point boundary-value problem.
 
-    The ODE must be supplied as a first-order system
-
-        y' = f(x, y, parameters)
-
-    and the boundary conditions as residuals
-
-        bc(y(a), y(b), parameters) = 0.
-
-    Parameters are fixed user parameters in v0.1; unknown/eigenparameters are
-    intentionally deferred to a later release.
+    The classical callbacks use NumPy arrays.  During the alpha PINN releases,
+    optional ``pinn_equations`` and ``pinn_boundary_conditions`` callbacks may
+    be supplied for PyTorch tensors.  This explicit separation preserves
+    autograd without breaking the established NumPy/SciPy API.
     """
 
     equations: ODEFunction
@@ -33,18 +27,26 @@ class BVPProblem:
     parameters: Mapping[str, float] = field(default_factory=dict)
     variable_names: Sequence[str] | None = None
     name: str = "Boundary-value problem"
+    pinn_equations: Callable | None = None
+    pinn_boundary_conditions: Callable | None = None
 
     def __post_init__(self) -> None:
         if not callable(self.equations):
             raise TypeError("equations must be callable")
         if not callable(self.boundary_conditions):
             raise TypeError("boundary_conditions must be callable")
+        if self.pinn_equations is not None and not callable(self.pinn_equations):
+            raise TypeError("pinn_equations must be callable or None")
+        if self.pinn_boundary_conditions is not None and not callable(
+            self.pinn_boundary_conditions
+        ):
+            raise TypeError("pinn_boundary_conditions must be callable or None")
 
         if len(self.domain) != 2:
             raise ValueError("domain must be a tuple (a, b)")
         a, b = map(float, self.domain)
         if not np.isfinite(a) or not np.isfinite(b):
-            raise ValueError("domain endpoints must be finite in v0.1")
+            raise ValueError("domain endpoints must be finite")
         if not a < b:
             raise ValueError("domain must satisfy a < b")
         self.domain = (a, b)
@@ -57,7 +59,7 @@ class BVPProblem:
             if not isinstance(key, str) or not key:
                 raise ValueError("parameter names must be non-empty strings")
             if not np.isscalar(value):
-                raise ValueError(f"parameter '{key}' must be scalar in v0.1")
+                raise ValueError(f"parameter '{key}' must be scalar")
 
         if self.variable_names is None:
             self.variable_names = tuple(f"y{i}" for i in range(self.n_equations))
@@ -111,5 +113,27 @@ class BVPProblem:
             raise ValueError(
                 "boundary_conditions must return exactly n_equations residuals "
                 f"({self.n_equations}); got {values.size}"
+            )
+        return values
+
+    def evaluate_pinn_equations(self, x, y):
+        if self.pinn_equations is None:
+            raise ValueError("pinn_equations was not supplied for this problem")
+        values = self.pinn_equations(x, y, self.parameters)
+        if tuple(values.shape) != tuple(y.shape):
+            raise ValueError(
+                "pinn_equations must return a tensor with the same shape as y; "
+                f"expected {tuple(y.shape)}, got {tuple(values.shape)}"
+            )
+        return values
+
+    def evaluate_pinn_boundary_conditions(self, ya, yb):
+        if self.pinn_boundary_conditions is None:
+            raise ValueError("pinn_boundary_conditions was not supplied for this problem")
+        values = self.pinn_boundary_conditions(ya, yb, self.parameters).reshape(-1)
+        if values.numel() != self.n_equations:
+            raise ValueError(
+                "pinn_boundary_conditions must return exactly n_equations residuals "
+                f"({self.n_equations}); got {values.numel()}"
             )
         return values

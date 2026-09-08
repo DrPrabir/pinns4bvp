@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pinns4bvp"
-version = "0.1.0"
-description = "Researcher-friendly tools for nonlinear two-point boundary-value problems, with PINN capabilities planned as an additional backend"
+version = "0.3.0.dev0"
+description = "General-purpose Python tools for boundary-value problems with classical collocation and physics-informed neural-network backends"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
@@ -16,7 +16,6 @@ authors = [
 keywords = [
   "boundary-value-problem",
   "bvp",
-  "boundary-layer",
   "collocation",
   "scientific-computing",
   "pinn"
