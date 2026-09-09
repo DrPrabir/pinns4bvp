@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from pinns4bvp.benchmark.metrics import ComparisonMetrics
+from pinns4bvp.benchmark.metrics import ComparisonMetrics, ParameterMetrics
 
 
 @dataclass(slots=True)
@@ -32,7 +32,9 @@ class BenchmarkReport:
     numerical: MethodRun | None = None
     pinn: MethodRun | None = None
     exact: object | None = None
+    exact_parameters: dict[str, float] = field(default_factory=dict)
     comparisons: dict[str, dict[str, ComparisonMetrics]] = field(default_factory=dict)
+    parameter_comparisons: dict[str, dict[str, ParameterMetrics]] = field(default_factory=dict)
 
     def metrics(self, comparison: str, variable: str | int = 0) -> ComparisonMetrics:
         idx = self.problem.variable_index(variable)
@@ -44,6 +46,14 @@ class BenchmarkReport:
             raise KeyError(
                 f"comparison '{comparison}' for variable '{name}' is unavailable. "
                 f"Available comparisons: {available}"
+            ) from exc
+
+    def parameter_metrics(self, comparison: str, name: str) -> ParameterMetrics:
+        try:
+            return self.parameter_comparisons[comparison][name]
+        except KeyError as exc:
+            raise KeyError(
+                f"parameter comparison '{comparison}' for '{name}' is unavailable"
             ) from exc
 
     def summary(self) -> str:
@@ -80,6 +90,19 @@ class BenchmarkReport:
                     f"{metrics.max_abs_error:>13.3e} "
                     f"{metrics.relative_l2:>13.3e}"
                 )
+
+        for comparison, by_parameter in self.parameter_comparisons.items():
+            lines.extend(["", "Parameter " + comparison.replace("_", " ").title()])
+            lines.append("parameter     reference      estimate       Abs error      Relative error")
+            lines.append("-" * 73)
+            for name, metrics in by_parameter.items():
+                lines.append(
+                    f"{name:<12} "
+                    f"{metrics.reference:>12.6g} "
+                    f"{metrics.estimate:>13.6g} "
+                    f"{metrics.abs_error:>14.3e} "
+                    f"{metrics.relative_error:>14.3e}"
+                )
         return "\n".join(lines)
 
     def to_dict(self) -> dict:
@@ -95,12 +118,19 @@ class BenchmarkReport:
                 "numerical": None if self.numerical is None else self.numerical.success,
                 "pinn": None if self.pinn is None else self.pinn.success,
             },
+            "exact_parameters": dict(self.exact_parameters),
             "comparisons": {},
+            "parameter_comparisons": {},
         }
         for comparison, by_variable in self.comparisons.items():
             data["comparisons"][comparison] = {
                 variable: metrics.as_dict()
                 for variable, metrics in by_variable.items()
+            }
+        for comparison, by_parameter in self.parameter_comparisons.items():
+            data["parameter_comparisons"][comparison] = {
+                name: metrics.as_dict()
+                for name, metrics in by_parameter.items()
             }
         return data
 

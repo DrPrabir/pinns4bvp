@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pinns4bvp"
-version = "0.4.0.dev0"
+version = "0.5.0.dev0"
 description = "General-purpose Python tools for boundary-value problems with classical collocation and physics-informed neural-network backends"
 readme = "README.md"
 requires-python = ">=3.10"

@@ -25,11 +25,7 @@ def solve(
     verbose: int = 0,
     raise_on_failure: bool = False,
 ) -> BVPSolution:
-    """Solve a :class:`BVPProblem` with a selected backend.
-
-    ``method='collocation'`` preserves the v0.1 SciPy behavior.
-    ``method='pinn'`` activates the optional PyTorch backend.
-    """
+    """Solve a :class:`BVPProblem` with a selected backend."""
 
     if not isinstance(problem, BVPProblem):
         raise TypeError("problem must be an instance of BVPProblem")
@@ -62,11 +58,15 @@ def solve(
         verbose=verbose,
     )
     report = build_convergence_report(problem, raw)
+    p_raw = getattr(raw, "p", None)
+    resolved = problem.parameter_mapping(p_raw if p_raw is not None else None)
+    parameter_values = {name: float(value) for name, value in resolved.items()}
     solution = BVPSolution(
         problem=problem,
         x=np.asarray(raw.x),
         y=np.asarray(raw.y),
         diagnostics=report,
+        parameters=parameter_values,
         _raw_solution=raw,
         metadata={"backend": "scipy"},
     )

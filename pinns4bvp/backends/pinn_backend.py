@@ -43,7 +43,7 @@ def _make_evaluator(model, problem, config):
 
 
 def solve_with_pinn(problem, *, config: PINNConfig | None = None, n_output: int = 201):
-    """Solve ``problem`` with a fully connected physics-informed neural network."""
+    """Solve ``problem`` with a PINN, including scalar unknown parameters."""
 
     import torch
 
@@ -56,7 +56,6 @@ def solve_with_pinn(problem, *, config: PINNConfig | None = None, n_output: int 
         raise ValueError("n_output must be at least 2")
 
     config = PINNConfig() if config is None else config
-    # Seed before network construction so weight initialization is repeatable.
     set_reproducibility(config.seed, deterministic=config.deterministic)
     model = build_network(
         problem.n_equations,
@@ -95,11 +94,15 @@ def solve_with_pinn(problem, *, config: PINNConfig | None = None, n_output: int 
         bc_residual_inf=float(np.sqrt(final_bc)) if np.isfinite(final_bc) else float("inf"),
     )
 
+    resolved = problem.parameter_mapping(result.unknown_parameters.floats())
+    parameter_values = {name: float(value) for name, value in resolved.items()}
+
     return BVPSolution(
         problem=problem,
         x=x,
         y=y,
         diagnostics=report,
+        parameters=parameter_values,
         _evaluator=evaluator,
         metadata={
             "backend": "pinn",

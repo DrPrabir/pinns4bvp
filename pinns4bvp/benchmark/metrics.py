@@ -21,6 +21,19 @@ class ComparisonMetrics:
         return asdict(self)
 
 
+@dataclass(frozen=True, slots=True)
+class ParameterMetrics:
+    """Error metrics for one scalar estimated parameter."""
+
+    reference: float
+    estimate: float
+    abs_error: float
+    relative_error: float
+
+    def as_dict(self) -> dict[str, float]:
+        return asdict(self)
+
+
 def error_metrics(reference, candidate) -> ComparisonMetrics:
     """Compute error metrics for two equally shaped arrays."""
 
@@ -53,11 +66,27 @@ def error_metrics(reference, candidate) -> ComparisonMetrics:
     )
 
 
-def compare_solutions(reference, candidate, *, variable=0, x=None) -> ComparisonMetrics:
-    """Compare two :class:`BVPSolution` objects on a common grid.
+def parameter_metrics(reference: float, estimate: float) -> ParameterMetrics:
+    """Compare one scalar estimated parameter with a reference value."""
 
-    This preserves the v0.3 public helper while using the v0.4 metric engine.
-    """
+    reference = float(reference)
+    estimate = float(estimate)
+    if not np.isfinite(reference) or not np.isfinite(estimate):
+        raise ValueError("parameter values must be finite")
+    abs_error = abs(estimate - reference)
+    relative_error = abs_error / abs(reference) if reference != 0.0 else (
+        0.0 if abs_error == 0.0 else float("inf")
+    )
+    return ParameterMetrics(
+        reference=reference,
+        estimate=estimate,
+        abs_error=float(abs_error),
+        relative_error=float(relative_error),
+    )
+
+
+def compare_solutions(reference, candidate, *, variable=0, x=None) -> ComparisonMetrics:
+    """Compare two :class:`BVPSolution` objects on a common grid."""
 
     if x is None:
         a = max(reference.problem.a, candidate.problem.a)

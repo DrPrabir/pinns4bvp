@@ -15,6 +15,7 @@ class BVPSolution:
     x: np.ndarray
     y: np.ndarray
     diagnostics: ConvergenceReport
+    parameters: dict[str, float] = field(default_factory=dict)
     _raw_solution: object | None = None
     _evaluator: Callable | None = None
     metadata: dict = field(default_factory=dict)
@@ -30,6 +31,22 @@ class BVPSolution:
     @property
     def variable_names(self) -> tuple[str, ...]:
         return tuple(self.problem.variable_names)
+
+    @property
+    def unknown_parameters(self) -> dict[str, float]:
+        return {
+            name: self.parameters[name]
+            for name in self.problem.unknown_parameter_names
+            if name in self.parameters
+        }
+
+    def parameter(self, name: str) -> float:
+        try:
+            return float(self.parameters[name])
+        except KeyError as exc:
+            raise KeyError(
+                f"unknown parameter '{name}'. Available: {tuple(self.parameters)}"
+            ) from exc
 
     def __call__(self, x, *, derivative: int = 0) -> np.ndarray:
         if derivative < 0:
@@ -65,7 +82,14 @@ class BVPSolution:
         return float(np.asarray(self.values(variable, x, derivative=derivative)))
 
     def summary(self) -> str:
-        return self.diagnostics.summary()
+        text = self.diagnostics.summary()
+        if self.problem.unknown_parameter_names:
+            lines = [text, "", "Solved parameters", "-----------------"]
+            for name in self.problem.unknown_parameter_names:
+                if name in self.parameters:
+                    lines.append(f"{name:<16}: {self.parameters[name]:.12g}")
+            return "\n".join(lines)
+        return text
 
     def plot(self, variable: str | int = 0, *, derivative: int = 0, ax=None, **kwargs):
         import matplotlib.pyplot as plt

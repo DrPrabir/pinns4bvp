@@ -1,39 +1,40 @@
-# PINNs4BVP v0.4 development notes
+# PINNs4BVP v0.5 development notes
 
 ## Scope
 
-v0.4 is intentionally application-neutral. The benchmark layer works with any `BVPProblem` that can be evaluated through the existing numerical and/or PINN backend.
+v0.5 introduces **unknown scalar parameters and eigenvalue BVPs** while preserving the general-purpose first-order BVP abstraction.
 
-## Exact-reference convention
+The mathematical interface is
 
-An exact reference can be supplied in either form:
+`y' = f(x, y, p)`
 
-```python
-def exact(x):
-    return np.vstack((y_exact(x), yp_exact(x)))
-```
+with boundary residuals
 
-or:
+`g(ya, yb, p) = 0`.
 
-```python
-exact = {
-    "y": y_exact,
-    "yp": yp_exact,
-}
-```
+For `n` state equations and `k` unknown parameters, `g` must return `n + k` residuals.
 
-This avoids embedding application-specific analytical solutions inside `BVPProblem`.
+## Design decisions
 
-## Runtime interpretation
+1. Fixed and unknown parameters are declared separately.
+2. User callbacks receive a single combined mapping.
+3. The SciPy backend uses SciPy's native unknown-parameter vector rather than an outer root-search loop.
+4. The PINN backend represents each unknown scalar as a trainable `torch.nn.Parameter` and optimizes it jointly with network weights.
+5. Solved parameter values are backend-independent and exposed on `BVPSolution.parameters`.
+6. Benchmarking can compare estimated parameters with known references.
 
-Timing comparisons must be interpreted carefully. Classical collocation time and PINN training time represent different computational workflows. v0.4 reports them transparently but does not claim that they are directly equivalent measures of efficiency. PINN inference timing is not yet reported separately.
+## Deliberate limitations
 
-## Planned follow-up
+- Unknowns are unconstrained scalar parameters only.
+- No bounds or positive/log transforms yet.
+- No observation/data loss: v0.5 is not yet a full inverse-problem framework.
+- No automatic eigenmode indexing or branch discovery.
+- PINN and NumPy callbacks remain separate during the alpha API period.
 
-Before a stable v0.4 release, consider adding:
+## Validation target
 
-- optional JSON/CSV export helpers,
-- separate PINN training and inference timing,
-- residual-norm benchmarking,
-- configurable benchmark grids,
-- multi-run PINN statistics for stochastic robustness.
+The canonical test problem is
+
+`y'' + k^2 y = 0`, `y(0)=0`, `y(1)=0`, `y'(0)=1`.
+
+The first positive mode has `k = pi`. The classical backend should recover this value to high accuracy; the PINN backend should learn it within a practical optimization tolerance.

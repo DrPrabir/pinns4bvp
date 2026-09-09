@@ -13,11 +13,12 @@ class PINNTrainingRecord:
     ode_loss: float
     bc_loss: float
     grad_norm: float | None = None
+    parameters: dict[str, float] = field(default_factory=dict)
 
 
 @dataclass(slots=True)
 class PINNTrainingHistory:
-    """Loss and gradient history recorded during PINN optimization."""
+    """Loss, gradient, and unknown-parameter history during optimization."""
 
     records: list[PINNTrainingRecord] = field(default_factory=list)
     stop_reason: str | None = None
@@ -33,6 +34,7 @@ class PINNTrainingHistory:
         ode_loss: float,
         bc_loss: float,
         grad_norm: float | None = None,
+        parameters: dict[str, float] | None = None,
     ) -> None:
         self.records.append(
             PINNTrainingRecord(
@@ -42,6 +44,7 @@ class PINNTrainingHistory:
                 ode_loss=float(ode_loss),
                 bc_loss=float(bc_loss),
                 grad_norm=None if grad_norm is None else float(grad_norm),
+                parameters=dict(parameters or {}),
             )
         )
 
@@ -61,16 +64,24 @@ class PINNTrainingHistory:
     def bc_loss(self) -> list[float]:
         return [record.bc_loss for record in self.records]
 
+    def parameter_history(self, name: str) -> list[float]:
+        return [record.parameters[name] for record in self.records if name in record.parameters]
+
     def summary(self) -> str:
         if self.final is None:
             return "PINN training history: no records"
-        return (
-            "PINN training report\n"
-            "--------------------\n"
-            f"Adam steps       : {self.adam_steps}\n"
-            f"L-BFGS evaluations: {self.lbfgs_evaluations}\n"
-            f"Final total loss : {self.final.total_loss:.3e}\n"
-            f"Final ODE loss   : {self.final.ode_loss:.3e}\n"
-            f"Final BC loss    : {self.final.bc_loss:.3e}\n"
-            f"Stop reason      : {self.stop_reason or 'completed'}"
-        )
+        lines = [
+            "PINN training report",
+            "--------------------",
+            f"Adam steps       : {self.adam_steps}",
+            f"L-BFGS evaluations: {self.lbfgs_evaluations}",
+            f"Final total loss : {self.final.total_loss:.3e}",
+            f"Final ODE loss   : {self.final.ode_loss:.3e}",
+            f"Final BC loss    : {self.final.bc_loss:.3e}",
+            f"Stop reason      : {self.stop_reason or 'completed'}",
+        ]
+        if self.final.parameters:
+            lines.extend(["", "Final unknown parameters"])
+            for name, value in self.final.parameters.items():
+                lines.append(f"{name:<16}: {value:.12g}")
+        return "\n".join(lines)

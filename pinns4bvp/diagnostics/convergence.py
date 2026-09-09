@@ -35,8 +35,9 @@ class ConvergenceReport:
 
 
 def build_convergence_report(problem: BVPProblem, scipy_result) -> ConvergenceReport:
+    raw_p = getattr(scipy_result, "p", None)
     bc_residual = problem.evaluate_boundary_conditions(
-        scipy_result.y[:, 0], scipy_result.y[:, -1]
+        scipy_result.y[:, 0], scipy_result.y[:, -1], raw_p
     )
     rms = getattr(scipy_result, "rms_residuals", None)
     max_rms = None if rms is None or len(rms) == 0 else float(np.max(np.abs(rms)))

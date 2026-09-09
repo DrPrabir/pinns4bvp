@@ -16,7 +16,11 @@ def solve_with_scipy(
     max_nodes: int = 10000,
     verbose: int = 0,
 ):
-    """Solve ``problem`` using SciPy's collocation BVP backend."""
+    """Solve ``problem`` using SciPy's collocation BVP backend.
+
+    If ``problem`` declares unknown parameters, SciPy solves their values
+    simultaneously with the state using its native ``p`` interface.
+    """
     if tol <= 0:
         raise ValueError("tol must be positive")
     if bc_tol is not None and bc_tol <= 0:
@@ -25,6 +29,25 @@ def solve_with_scipy(
         raise ValueError("max_nodes cannot be smaller than the initial mesh size")
     if verbose not in (0, 1, 2):
         raise ValueError("verbose must be 0, 1, or 2")
+
+    if problem.n_unknown_parameters:
+        def fun(x, y, p):
+            return problem.evaluate_equations(x, y, p)
+
+        def bc(ya, yb, p):
+            return problem.evaluate_boundary_conditions(ya, yb, p)
+
+        return scipy_solve_bvp(
+            fun,
+            bc,
+            mesh,
+            initial_guess,
+            p=problem.initial_unknown_values,
+            tol=tol,
+            bc_tol=bc_tol,
+            max_nodes=max_nodes,
+            verbose=verbose,
+        )
 
     def fun(x, y):
         return problem.evaluate_equations(x, y)

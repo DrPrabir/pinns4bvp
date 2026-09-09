@@ -6,6 +6,7 @@ from dataclasses import dataclass
 
 from pinns4bvp.diagnostics.pinn_training import PINNTrainingHistory
 from pinns4bvp.pinn.losses import compute_pinn_loss
+from pinns4bvp.pinn.parameters import PINNUnknownParameterSet
 from pinns4bvp.pinn.reproducibility import set_reproducibility
 
 
@@ -14,6 +15,7 @@ class PINNTrainingResult:
     model: object
     history: PINNTrainingHistory
     x_collocation: object
+    unknown_parameters: PINNUnknownParameterSet
 
 
 def _torch_dtype(name: str):
@@ -39,18 +41,18 @@ def _make_collocation(problem, config):
     return x[:, None].detach().clone().requires_grad_(True)
 
 
-def _gradient_norm(model) -> float:
+def _gradient_norm(parameters) -> float:
     import torch
 
     sq = torch.zeros((), dtype=torch.float64)
-    for parameter in model.parameters():
+    for parameter in parameters:
         if parameter.grad is not None:
             sq += parameter.grad.detach().double().norm(2).square().cpu()
     return float(torch.sqrt(sq))
 
 
 def train_pinn(problem, model, config) -> PINNTrainingResult:
-    """Train ``model`` for ``problem`` with Adam followed by optional L-BFGS."""
+    """Train ``model`` and any unknown scalar parameters simultaneously."""
 
     import torch
 
@@ -58,14 +60,22 @@ def train_pinn(problem, model, config) -> PINNTrainingResult:
     dtype = _torch_dtype(config.dtype)
     device = torch.device(config.device)
     model = model.to(device=device, dtype=dtype)
+    unknown = PINNUnknownParameterSet(problem, dtype=dtype, device=device)
     x_collocation = _make_collocation(problem, config)
     history = PINNTrainingHistory()
 
+    trainables = list(model.parameters()) + unknown.trainable()
     best = float("inf")
     stale = 0
 
+    def parameter_values():
+        return unknown.mapping() if problem.n_unknown_parameters else None
+
+    def parameter_floats():
+        return unknown.floats()
+
     if config.adam_epochs > 0:
-        optimizer = torch.optim.Adam(model.parameters(), lr=config.adam_lr)
+        optimizer = torch.optim.Adam(trainables, lr=config.adam_lr)
         for epoch in range(1, config.adam_epochs + 1):
             optimizer.zero_grad(set_to_none=True)
             losses = compute_pinn_loss(
@@ -74,11 +84,12 @@ def train_pinn(problem, model, config) -> PINNTrainingResult:
                 x_collocation,
                 ode_weight=config.ode_weight,
                 bc_weight=config.bc_weight,
+                unknown_values=parameter_values(),
             )
             losses.total.backward()
-            grad_norm = _gradient_norm(model)
+            grad_norm = _gradient_norm(trainables)
             if config.grad_clip_norm is not None:
-                torch.nn.utils.clip_grad_norm_(model.parameters(), config.grad_clip_norm)
+                torch.nn.utils.clip_grad_norm_(trainables, config.grad_clip_norm)
             optimizer.step()
             history.adam_steps = epoch
 
@@ -91,13 +102,19 @@ def train_pinn(problem, model, config) -> PINNTrainingResult:
                     ode_loss=float(losses.ode.detach().cpu()),
                     bc_loss=float(losses.bc.detach().cpu()),
                     grad_norm=grad_norm,
+                    parameters=parameter_floats(),
                 )
 
             if config.verbose and (epoch == 1 or epoch % config.print_every == 0):
+                suffix = ""
+                if problem.n_unknown_parameters:
+                    suffix = " | " + ", ".join(
+                        f"{name}={value:.8g}" for name, value in parameter_floats().items()
+                    )
                 print(
                     f"Adam {epoch:6d} | total={total_value:.3e} "
                     f"ode={float(losses.ode.detach().cpu()):.3e} "
-                    f"bc={float(losses.bc.detach().cpu()):.3e}"
+                    f"bc={float(losses.bc.detach().cpu()):.3e}{suffix}"
                 )
 
             if total_value <= config.loss_tolerance:
@@ -119,7 +136,7 @@ def train_pinn(problem, model, config) -> PINNTrainingResult:
 
     if config.use_lbfgs and config.lbfgs_max_iter > 0:
         optimizer = torch.optim.LBFGS(
-            model.parameters(),
+            trainables,
             lr=config.lbfgs_lr,
             max_iter=config.lbfgs_max_iter,
             history_size=config.lbfgs_history_size,
@@ -138,6 +155,7 @@ def train_pinn(problem, model, config) -> PINNTrainingResult:
                 x_collocation,
                 ode_weight=config.ode_weight,
                 bc_weight=config.bc_weight,
+                unknown_values=parameter_values(),
             )
             losses.total.backward()
             closure_calls += 1
@@ -149,7 +167,8 @@ def train_pinn(problem, model, config) -> PINNTrainingResult:
                     total_loss=float(losses.total.detach().cpu()),
                     ode_loss=float(losses.ode.detach().cpu()),
                     bc_loss=float(losses.bc.detach().cpu()),
-                    grad_norm=_gradient_norm(model),
+                    grad_norm=_gradient_norm(trainables),
+                    parameters=parameter_floats(),
                 )
             return losses.total
 
@@ -161,6 +180,7 @@ def train_pinn(problem, model, config) -> PINNTrainingResult:
             x_collocation,
             ode_weight=config.ode_weight,
             bc_weight=config.bc_weight,
+            unknown_values=parameter_values(),
         )
         history.append(
             step=closure_calls,
@@ -169,12 +189,38 @@ def train_pinn(problem, model, config) -> PINNTrainingResult:
             ode_loss=float(final_losses.ode.detach().cpu()),
             bc_loss=float(final_losses.bc.detach().cpu()),
             grad_norm=None,
+            parameters=parameter_floats(),
         )
         if float(final_losses.total.detach().cpu()) <= config.loss_tolerance:
             history.stop_reason = "loss_tolerance reached after L-BFGS"
         elif history.stop_reason is None:
             history.stop_reason = "Adam + L-BFGS completed"
     elif history.stop_reason is None:
+        # Ensure a final record contains up-to-date parameter values if training
+        # stopped between history checkpoints.
+        if history.final is not None and problem.n_unknown_parameters:
+            final = compute_pinn_loss(
+                problem,
+                model,
+                x_collocation,
+                ode_weight=config.ode_weight,
+                bc_weight=config.bc_weight,
+                unknown_values=parameter_values(),
+            )
+            history.append(
+                step=history.adam_steps,
+                stage="adam-final",
+                total_loss=float(final.total.detach().cpu()),
+                ode_loss=float(final.ode.detach().cpu()),
+                bc_loss=float(final.bc.detach().cpu()),
+                grad_norm=None,
+                parameters=parameter_floats(),
+            )
         history.stop_reason = "Adam completed"
 
-    return PINNTrainingResult(model=model, history=history, x_collocation=x_collocation)
+    return PINNTrainingResult(
+        model=model,
+        history=history,
+        x_collocation=x_collocation,
+        unknown_parameters=unknown,
+    )

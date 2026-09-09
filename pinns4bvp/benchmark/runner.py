@@ -7,7 +7,7 @@ from time import perf_counter
 import numpy as np
 
 from pinns4bvp.benchmark.exact import ExactReference
-from pinns4bvp.benchmark.metrics import error_metrics
+from pinns4bvp.benchmark.metrics import error_metrics, parameter_metrics
 from pinns4bvp.benchmark.report import BenchmarkReport, MethodRun
 from pinns4bvp.solver import solve
 
@@ -26,13 +26,13 @@ def _normalize_variables(problem, variables):
     return tuple(names)
 
 
-
 def _validate_solution(problem, solution, label: str):
     if solution.problem.n_equations != problem.n_equations:
         raise ValueError(f"{label} solution has incompatible n_equations")
     if tuple(solution.problem.domain) != tuple(problem.domain):
         raise ValueError(f"{label} solution has an incompatible domain")
     return solution
+
 
 def _timed_solve(problem, method: str, kwargs: dict):
     start = perf_counter()
@@ -41,10 +41,26 @@ def _timed_solve(problem, method: str, kwargs: dict):
     return MethodRun(method, solution, float(elapsed))
 
 
+def _validate_exact_parameters(problem, exact_parameters):
+    if exact_parameters is None:
+        return {}
+    refs = {str(name): float(value) for name, value in dict(exact_parameters).items()}
+    unknown = set(problem.unknown_parameter_names)
+    extra = [name for name in refs if name not in unknown]
+    if extra:
+        raise ValueError(
+            f"exact_parameters contains parameters not declared unknown: {extra}"
+        )
+    if not all(np.isfinite(value) for value in refs.values()):
+        raise ValueError("exact parameter values must be finite")
+    return refs
+
+
 def benchmark_problem(
     problem,
     *,
     exact=None,
+    exact_parameters=None,
     x=None,
     n_points: int = 501,
     variables=None,
@@ -56,12 +72,7 @@ def benchmark_problem(
     pinn_config=None,
     pinn_kwargs: dict | None = None,
 ) -> BenchmarkReport:
-    """Benchmark numerical collocation, PINN, and an optional exact solution.
-
-    Existing solutions may be supplied to avoid re-solving.  When a solution is
-    supplied, its runtime is recorded as ``None`` because the benchmark did not
-    perform that solve.
-    """
+    """Benchmark collocation, PINN, exact states, and exact parameters."""
 
     if n_points < 2:
         raise ValueError("n_points must be at least 2")
@@ -80,17 +91,14 @@ def benchmark_problem(
 
     variable_names = _normalize_variables(problem, variables)
     exact_ref = None if exact is None else ExactReference(problem, exact)
+    exact_parameter_refs = _validate_exact_parameters(problem, exact_parameters)
 
     numerical_run = None
     if numerical_solution is not None:
         numerical_solution = _validate_solution(problem, numerical_solution, "numerical")
         numerical_run = MethodRun("numerical", numerical_solution, None)
     elif run_numerical:
-        numerical_run = _timed_solve(
-            problem,
-            "collocation",
-            dict(numerical_kwargs or {}),
-        )
+        numerical_run = _timed_solve(problem, "collocation", dict(numerical_kwargs or {}))
 
     pinn_run = None
     if pinn_solution is not None:
@@ -134,6 +142,26 @@ def benchmark_problem(
             for variable in variable_names
         }
 
+    parameter_comparisons: dict[str, dict[str, object]] = {}
+    if exact_parameter_refs and numerical_run is not None:
+        parameter_comparisons["numerical_vs_exact"] = {
+            name: parameter_metrics(reference, numerical_run.solution.parameters[name])
+            for name, reference in exact_parameter_refs.items()
+        }
+    if exact_parameter_refs and pinn_run is not None:
+        parameter_comparisons["pinn_vs_exact"] = {
+            name: parameter_metrics(reference, pinn_run.solution.parameters[name])
+            for name, reference in exact_parameter_refs.items()
+        }
+    if numerical_run is not None and pinn_run is not None and problem.unknown_parameter_names:
+        parameter_comparisons["pinn_vs_numerical"] = {
+            name: parameter_metrics(
+                numerical_run.solution.parameters[name],
+                pinn_run.solution.parameters[name],
+            )
+            for name in problem.unknown_parameter_names
+        }
+
     return BenchmarkReport(
         problem=problem,
         x=np.asarray(x, dtype=float),
@@ -141,5 +169,7 @@ def benchmark_problem(
         numerical=numerical_run,
         pinn=pinn_run,
         exact=exact_ref,
+        exact_parameters=exact_parameter_refs,
         comparisons=comparisons,
+        parameter_comparisons=parameter_comparisons,
     )

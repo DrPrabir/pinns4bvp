@@ -1,39 +1,45 @@
 # Changelog
 
-## 0.4.0.dev0
+## 0.5.0.dev0
 
 ### Added
 
-- General `benchmark_problem(...)` runner.
-- Numerical vs exact comparison.
-- PINN vs exact comparison.
-- PINN vs numerical comparison.
-- Common-grid evaluation for all benchmark methods.
-- RMSE, MAE, maximum absolute error, absolute L2, and relative L2 metrics.
-- Exact reference adapter supporting full-state callables and variable mappings.
-- Structured `BenchmarkReport` and `MethodRun` objects.
-- Benchmark runtime measurement for solves executed by the runner.
-- Benchmark dictionary export through `BenchmarkReport.to_dict()`.
-- Numerical/PINN/exact overlay plotting.
-- General linear BVP benchmark example and benchmark tests.
+- `UnknownParameter` / `Unknown` public parameter specification.
+- `BVPProblem.unknown_parameters` for scalar parameters solved with the BVP state.
+- Combined fixed/unknown callback parameter mappings.
+- Native SciPy `solve_bvp(..., p=...)` integration for unknown parameters.
+- Joint PINN optimization of network weights and unknown scalar parameters.
+- Unknown-parameter values in PINN training history.
+- `BVPSolution.parameters`, `BVPSolution.unknown_parameters`, and `parameter(name)`.
+- Parameter reference/error metrics in the benchmarking framework.
+- Classical eigenvalue BVP example recovering `k = pi`.
+- PINN eigenvalue BVP example.
+- Unknown-parameter and eigenvalue regression tests.
 
 ### Changed
 
-- Refactored the previous single `benchmark.py` module into the `pinns4bvp.benchmark` package while preserving `compare_solutions` imports.
-- Top-level package now exports `benchmark_problem`.
+- Boundary callbacks now return `n_equations + n_unknown_parameters` residuals when unknown parameters are declared.
+- Convergence diagnostics evaluate boundary residuals with the solved SciPy parameter vector.
+- PINN optimizer includes unknown scalar parameters in both Adam and L-BFGS stages.
 
-### Scientific note
+### Compatibility
 
-A PINN runtime reported by `benchmark_problem` includes the PINN solve/training call. A numerical runtime includes the complete collocation solve call. If a precomputed solution is supplied, runtime is reported as not measured rather than as zero.
+Problems without unknown parameters retain the v0.4 callback and solver behavior.
+
+## 0.4.0.dev0
+
+- General numerical vs PINN vs exact benchmarking framework.
+- Standard error metrics, timing, benchmark reports, and plots.
 
 ## 0.3.0.dev0
 
-- Robust PINN training development snapshot with Adam, optional L-BFGS, reproducibility controls, training diagnostics, stopping criteria, and gradient diagnostics.
+- Robust Adam + L-BFGS PINN training.
+- Diagnostics and reproducibility controls.
 
 ## 0.2.0.dev0
 
-- Initial PyTorch PINN development structure.
+- Initial PyTorch PINN backend development.
 
 ## 0.1.0
 
-- Initial classical BVP framework using SciPy `solve_bvp` as the numerical backend.
+- Basic general BVP framework using the SciPy collocation backend.

@@ -14,7 +14,15 @@ class PINNLoss:
     bc: object
 
 
-def compute_pinn_loss(problem, model, x_collocation, *, ode_weight: float, bc_weight: float):
+def compute_pinn_loss(
+    problem,
+    model,
+    x_collocation,
+    *,
+    ode_weight: float,
+    bc_weight: float,
+    unknown_values=None,
+):
     """Compute ODE residual, boundary residual, and weighted total loss."""
 
     import torch
@@ -30,7 +38,7 @@ def compute_pinn_loss(problem, model, x_collocation, *, ode_weight: float, bc_we
 
     x_flat = x_collocation[:, 0]
     y_state = y_pred.T
-    rhs = problem.evaluate_pinn_equations(x_flat, y_state).T
+    rhs = problem.evaluate_pinn_equations(x_flat, y_state, unknown_values).T
     ode_residual = dy_dx - rhs
     ode_loss = torch.mean(ode_residual.square())
 
@@ -38,7 +46,7 @@ def compute_pinn_loss(problem, model, x_collocation, *, ode_weight: float, bc_we
     xb = torch.as_tensor([[problem.b]], dtype=x_collocation.dtype, device=x_collocation.device)
     ya = model(xa)[0]
     yb = model(xb)[0]
-    bc_residual = problem.evaluate_pinn_boundary_conditions(ya, yb)
+    bc_residual = problem.evaluate_pinn_boundary_conditions(ya, yb, unknown_values)
     bc_loss = torch.mean(bc_residual.square())
 
     total = ode_weight * ode_loss + bc_weight * bc_loss
