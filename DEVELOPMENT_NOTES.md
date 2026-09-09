@@ -1,28 +1,39 @@
-# PINNs4BVP v0.3 training development notes
+# PINNs4BVP v0.4 development notes
 
-This snapshot is intended for development on a feature branch.  It is not a
-stable release tag.
+## Scope
 
-## Training pipeline
+v0.4 is intentionally application-neutral. The benchmark layer works with any `BVPProblem` that can be evaluated through the existing numerical and/or PINN backend.
 
-1. Set Python / NumPy / PyTorch seeds before network construction.
-2. Build a domain-normalized MLP.
-3. Construct deterministic uniform or seeded-random collocation points.
-4. Minimize weighted first-order ODE and boundary residual losses with Adam.
-5. Optionally refine with PyTorch L-BFGS.
-6. Record total, ODE, BC, and gradient-norm diagnostics.
-7. Return a backend-independent `BVPSolution` with training metadata.
+## Exact-reference convention
 
-## Current alpha API limitation
+An exact reference can be supplied in either form:
 
-The classical backend accepts NumPy callbacks.  The PINN backend currently
-requires equivalent PyTorch-native callbacks (`pinn_equations` and
-`pinn_boundary_conditions`) so autograd is not broken by NumPy conversion.
-A later API revision should reduce this duplication.
+```python
+def exact(x):
+    return np.vstack((y_exact(x), yp_exact(x)))
+```
 
-## Validation performed
+or:
 
-- Existing linear, Bratu, and Blasius collocation examples still converge.
-- Blasius gives f''(0) = 0.33205734.
-- PINN network/autodiff/reproducibility tests pass.
-- A linear BVP PINN is checked against the exact/collocation solution.
+```python
+exact = {
+    "y": y_exact,
+    "yp": yp_exact,
+}
+```
+
+This avoids embedding application-specific analytical solutions inside `BVPProblem`.
+
+## Runtime interpretation
+
+Timing comparisons must be interpreted carefully. Classical collocation time and PINN training time represent different computational workflows. v0.4 reports them transparently but does not claim that they are directly equivalent measures of efficiency. PINN inference timing is not yet reported separately.
+
+## Planned follow-up
+
+Before a stable v0.4 release, consider adding:
+
+- optional JSON/CSV export helpers,
+- separate PINN training and inference timing,
+- residual-norm benchmarking,
+- configurable benchmark grids,
+- multi-run PINN statistics for stochastic robustness.

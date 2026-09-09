@@ -1,52 +1,57 @@
 # PINNs4BVP
 
-PINNs4BVP is a general-purpose Python framework for two-point boundary-value
-problems (BVPs).  It provides a classical SciPy collocation backend and is
-developing an interchangeable PyTorch physics-informed neural-network backend.
+PINNs4BVP is an alpha-stage, general-purpose Python framework for two-point boundary-value problems (BVPs). It provides a common problem/solution interface for classical collocation and physics-informed neural-network (PINN) backends.
 
-## v0.3 development focus
+## v0.4 development focus
 
-The current development snapshot adds a robust PINN training engine:
+The v0.4 development snapshot adds a general benchmarking layer for comparing:
 
-- deterministic seeds and reproducibility controls;
-- Adam optimization;
-- optional L-BFGS refinement;
-- ODE and boundary loss diagnostics;
-- early stopping and loss tolerances;
-- optional gradient clipping;
-- structured training histories;
-- backend-independent solution evaluation.
+- classical numerical collocation,
+- PyTorch PINN solutions,
+- exact/analytical solutions when available.
 
-The core is application-neutral: it works with general first-order systems
+The benchmark engine evaluates all methods on a common grid and reports RMSE, MAE, maximum absolute error, absolute L2 error, relative L2 error, solver/training success, and measured runtimes for solves performed by the benchmark.
 
-`y' = f(x, y, p)`
-
-and two-point boundary residuals.
-
-## Install for development
+## Installation for development
 
 ```bash
 python -m pip install -e ".[dev]"
 ```
 
-## Classical solve
+For users who only need the classical backend:
 
-```python
-sol = solve(problem, method="collocation")
+```bash
+python -m pip install -e .
 ```
 
-## PINN solve (development API)
-
-During the alpha releases, PINN problems provide PyTorch-native equation and
-boundary callbacks in addition to the NumPy callbacks used by SciPy:
+## Benchmark example
 
 ```python
-config = PINNConfig(seed=1234)
-sol = solve(problem, method="pinn", pinn_config=config)
+from pinns4bvp import benchmark_problem
+
+report = benchmark_problem(
+    problem,
+    exact=exact_solution,
+    numerical_kwargs={"tol": 1e-10},
+    pinn_config=pinn_config,
+)
+
+print(report.summary())
+report.plot("y")
 ```
 
-See `pinns4bvp/examples/pinn_linear_bvp.py`.
+An exact solution may be supplied either as a callable returning the complete first-order state or as a mapping from variable names to exact callables.
+
+See:
+
+```bash
+python -m pinns4bvp.examples.benchmark_linear_bvp
+```
+
+## Development status
+
+v0.4 is a development snapshot, not a stable release. The public API may change before v1.0. Numerical and PINN results should be independently verified for research use.
 
 ## License
 
-MIT.
+MIT. See `LICENSE` and `THIRD_PARTY.md`.
