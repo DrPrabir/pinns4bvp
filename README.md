@@ -43,14 +43,9 @@ pytest
 
 ## Install directly from GitHub
 
-After you upload the repository to GitHub, users can install it with:
-
 ```bash
-python -m pip install git+https://github.com/YOUR_USERNAME/pinns4bvp.git
+python -m pip install git+https://github.com/DrPrabir/pinns4bvp.git
 ```
-
-Replace `YOUR_USERNAME` with the GitHub account or organization that owns the
-repository.
 
 ## Minimal example
 
