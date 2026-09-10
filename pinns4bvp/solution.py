@@ -66,6 +66,18 @@ class BVPSolution:
         values = self(x, derivative=derivative)
         return values[idx]
 
+    def derivative(self, variable: str | int = "y", *, order: int = 1, x=None):
+        """Evaluate a derivative of a physical solution variable.
+
+        For v0.8 higher-order problems, the base state name (for example
+        ``"u"``) is differentiated directly through the backend evaluator.
+        The method also works for legacy first-order problems.
+        """
+
+        if not isinstance(order, int) or order < 0:
+            raise ValueError("order must be an integer >= 0")
+        return self.values(variable, x, derivative=order)
+
     def wall_value(
         self,
         variable: str | int,

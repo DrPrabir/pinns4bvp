@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pinns4bvp"
-version = "0.7.0.dev0"
-description = "General-purpose Python tools for boundary-value problems with classical collocation and physics-informed neural-network backends"
+version = "0.8.0.dev0"
+description = "General-purpose boundary-value problem tools with higher-order, collocation, continuation, and PINN interfaces"
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
@@ -18,7 +18,10 @@ keywords = [
   "bvp",
   "collocation",
   "scientific-computing",
-  "pinn"
+  "pinn",
+  "higher-order-ode",
+  "eigenvalue",
+  "continuation"
 ]
 classifiers = [
   "Development Status :: 3 - Alpha",

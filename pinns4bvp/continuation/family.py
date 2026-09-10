@@ -24,6 +24,7 @@ class ContinuationPoint:
     warm_start_used: bool = False
     message: str = ""
     residual_report: object | None = None
+    retained: bool = True
 
     @property
     def success(self) -> bool:
@@ -32,7 +33,7 @@ class ContinuationPoint:
 
 @dataclass(slots=True)
 class SolutionFamily:
-    """A parameter-indexed collection of BVP solutions and diagnostics."""
+    """A parameter-indexed continuation result with configurable retention."""
 
     problem: object
     parameter_name: str
@@ -42,6 +43,10 @@ class SolutionFamily:
     metadata: dict = field(default_factory=dict)
 
     @property
+    def save_policy(self) -> str:
+        return str(self.metadata.get("save", "all"))
+
+    @property
     def requested_results(self) -> tuple[ContinuationPoint, ...]:
         """Final recorded result for each requested parameter value."""
 
@@ -49,11 +54,7 @@ class SolutionFamily:
         for point in self.points:
             if point.requested:
                 latest[float(point.value)] = point
-        return tuple(
-            latest[value]
-            for value in self.requested_values
-            if value in latest
-        )
+        return tuple(latest[value] for value in self.requested_values if value in latest)
 
     @property
     def successful_points(self) -> tuple[ContinuationPoint, ...]:
@@ -64,19 +65,52 @@ class SolutionFamily:
         return tuple(point for point in self.requested_results if not point.accepted)
 
     @property
+    def retained_points(self) -> tuple[ContinuationPoint, ...]:
+        return tuple(
+            point
+            for point in self.points
+            if point.retained and point.solution is not None
+        )
+
+    @property
     def solutions(self) -> tuple[object, ...]:
+        """Retained accepted requested solutions.
+
+        With ``save='final'`` this contains only the final requested solution;
+        use ``requested_results`` for lightweight status at every target.
+        """
+
         return tuple(
             point.solution
             for point in self.requested_results
-            if point.accepted and point.solution is not None
+            if point.accepted and point.solution is not None and point.retained
         )
 
     @property
     def values(self) -> np.ndarray:
         return np.asarray(
-            [point.value for point in self.requested_results if point.accepted],
+            [
+                point.value
+                for point in self.requested_results
+                if point.accepted and point.solution is not None and point.retained
+            ],
             dtype=float,
         )
+
+    @property
+    def final_point(self) -> ContinuationPoint | None:
+        if not self.requested_values:
+            return None
+        target = float(self.requested_values[-1])
+        matches = [p for p in self.requested_results if float(p.value) == target]
+        return matches[-1] if matches else None
+
+    @property
+    def final_solution(self):
+        point = self.final_point
+        if point is None or not point.accepted or point.solution is None:
+            return None
+        return point.solution
 
     @property
     def success(self) -> bool:
@@ -100,8 +134,39 @@ class SolutionFamily:
             total_solve_time=float(sum(point.elapsed_seconds for point in self.points)),
         )
 
+    @property
+    def history(self) -> tuple[dict, ...]:
+        """Lightweight continuation history retained under every save policy."""
+
+        rows = []
+        for point in self.points:
+            residual = point.residual_report
+            rows.append(
+                {
+                    "parameter": float(point.value),
+                    "requested": bool(point.requested),
+                    "accepted": bool(point.accepted),
+                    "retry_level": int(point.retry_level),
+                    "source_value": point.source_value,
+                    "elapsed_seconds": float(point.elapsed_seconds),
+                    "warm_start_used": bool(point.warm_start_used),
+                    "retained": bool(point.retained and point.solution is not None),
+                    "ode_rms": None if residual is None else residual.ode_rms,
+                    "ode_max_abs": None if residual is None else residual.ode_max_abs,
+                    "bc_max_abs": None if residual is None else residual.bc_max_abs,
+                    "message": point.message,
+                }
+            )
+        return tuple(rows)
+
     def summary(self) -> str:
-        lines = [self.diagnostics.summary(), "", "Requested values", "----------------"]
+        lines = [
+            self.diagnostics.summary(),
+            f"Save policy      : {self.save_policy}",
+            "",
+            "Requested values",
+            "----------------",
+        ]
         result_map = {float(point.value): point for point in self.requested_results}
         for value in self.requested_values:
             point = result_map.get(value)
@@ -115,22 +180,27 @@ class SolutionFamily:
                 status = "failed"
                 message = point.message
             suffix = f" - {message}" if message else ""
-            lines.append(f"{value: .10g} : {status}{suffix}")
+            retained = " [retained]" if point is not None and point.solution is not None else ""
+            lines.append(f"{value: .10g} : {status}{retained}{suffix}")
         return "\n".join(lines)
 
     def solution_at(self, value: float, *, atol: float = 1e-12, requested_only: bool = False):
         candidates = self.requested_results if requested_only else tuple(self.points)
         matches = [
-            point for point in candidates
-            if point.accepted and point.solution is not None and abs(point.value - value) <= atol
+            point
+            for point in candidates
+            if point.accepted
+            and point.solution is not None
+            and abs(point.value - value) <= atol
         ]
         if not matches:
-            raise KeyError(f"no accepted solution found at {self.parameter_name}={value}")
+            raise KeyError(
+                f"no retained accepted solution found at {self.parameter_name}={value}; "
+                f"save policy is '{self.save_policy}'"
+            )
         return matches[-1].solution
 
     def evaluate(self, func: Callable, *, requested_only: bool = True):
-        """Evaluate ``func(solution)`` along accepted family points."""
-
         source = self.requested_results if requested_only else tuple(self.points)
         values = []
         outputs = []
@@ -140,31 +210,13 @@ class SolutionFamily:
                 outputs.append(func(point.solution))
         return np.asarray(values, dtype=float), np.asarray(outputs)
 
-    def track(
-        self,
-        variable: str | int,
-        x: float,
-        *,
-        derivative: int = 0,
-        requested_only: bool = True,
-    ):
-        """Track one state quantity at a fixed x value along the family."""
-
+    def track(self, variable: str | int, x: float, *, derivative: int = 0, requested_only: bool = True):
         return self.evaluate(
             lambda sol: float(np.asarray(sol.values(variable, x, derivative=derivative))),
             requested_only=requested_only,
         )
 
-    def plot_profiles(
-        self,
-        variable: str | int = 0,
-        *,
-        derivative: int = 0,
-        requested_only: bool = True,
-        ax=None,
-    ):
-        """Overlay state profiles for accepted continuation points."""
-
+    def plot_profiles(self, variable: str | int = 0, *, derivative: int = 0, requested_only: bool = True, ax=None):
         import matplotlib.pyplot as plt
 
         if ax is None:
@@ -185,17 +237,7 @@ class SolutionFamily:
         ax.legend()
         return ax
 
-    def plot_track(
-        self,
-        variable: str | int,
-        x: float,
-        *,
-        derivative: int = 0,
-        requested_only: bool = True,
-        ax=None,
-    ):
-        """Plot a scalar state quantity against the continuation parameter."""
-
+    def plot_track(self, variable: str | int, x: float, *, derivative: int = 0, requested_only: bool = True, ax=None):
         import matplotlib.pyplot as plt
 
         p, response = self.track(

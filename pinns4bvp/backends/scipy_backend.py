@@ -18,8 +18,8 @@ def solve_with_scipy(
 ):
     """Solve ``problem`` using SciPy's collocation BVP backend.
 
-    If ``problem`` declares unknown parameters, SciPy solves their values
-    simultaneously with the state using its native ``p`` interface.
+    v0.8 forwards optional analytical ODE/BC Jacobians and SciPy-compatible
+    singular matrices while preserving the v0.1-v0.7 callback behavior.
     """
     if tol <= 0:
         raise ValueError("tol must be positive")
@@ -30,6 +30,14 @@ def solve_with_scipy(
     if verbose not in (0, 1, 2):
         raise ValueError("verbose must be 0, 1, or 2")
 
+    common = dict(
+        tol=tol,
+        bc_tol=bc_tol,
+        max_nodes=max_nodes,
+        verbose=verbose,
+        S=problem.singular_matrix,
+    )
+
     if problem.n_unknown_parameters:
         def fun(x, y, p):
             return problem.evaluate_equations(x, y, p)
@@ -37,16 +45,25 @@ def solve_with_scipy(
         def bc(ya, yb, p):
             return problem.evaluate_boundary_conditions(ya, yb, p)
 
+        fun_jac = None
+        if problem.equations_jacobian is not None:
+            def fun_jac(x, y, p):
+                return problem.evaluate_equations_jacobian(x, y, p)
+
+        bc_jac = None
+        if problem.boundary_jacobian is not None:
+            def bc_jac(ya, yb, p):
+                return problem.evaluate_boundary_jacobian(ya, yb, p)
+
         return scipy_solve_bvp(
             fun,
             bc,
             mesh,
             initial_guess,
             p=problem.initial_unknown_values,
-            tol=tol,
-            bc_tol=bc_tol,
-            max_nodes=max_nodes,
-            verbose=verbose,
+            fun_jac=fun_jac,
+            bc_jac=bc_jac,
+            **common,
         )
 
     def fun(x, y):
@@ -55,13 +72,22 @@ def solve_with_scipy(
     def bc(ya, yb):
         return problem.evaluate_boundary_conditions(ya, yb)
 
+    fun_jac = None
+    if problem.equations_jacobian is not None:
+        def fun_jac(x, y):
+            return problem.evaluate_equations_jacobian(x, y)
+
+    bc_jac = None
+    if problem.boundary_jacobian is not None:
+        def bc_jac(ya, yb):
+            return problem.evaluate_boundary_jacobian(ya, yb)
+
     return scipy_solve_bvp(
         fun,
         bc,
         mesh,
         initial_guess,
-        tol=tol,
-        bc_tol=bc_tol,
-        max_nodes=max_nodes,
-        verbose=verbose,
+        fun_jac=fun_jac,
+        bc_jac=bc_jac,
+        **common,
     )

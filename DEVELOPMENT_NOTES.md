@@ -1,55 +1,107 @@
-# PINNs4BVP v0.7 development notes
+# PINNs4BVP v0.8 development notes
 
 ## Scope
 
-v0.7 adds natural one-parameter continuation and solution-family management while retaining the general-purpose BVP design.
+v0.8 adds a high-level higher-order formulation layer while deliberately retaining the established first-order `BVPProblem` as the internal solver contract. The design goal is one mathematical problem definition that can feed both classical NumPy/SciPy and PyTorch/PINN backends.
 
-The continuation parameter must be a fixed scalar in `problem.parameters`. Unknown parameters introduced in v0.5 are solved at every continuation point and may be initialized from the preceding accepted solution.
+## Architecture
 
-## Core continuation objects
+The new high-level flow is:
 
-- `ContinuationConfig`: stepping, retry, residual, and warm-start policy.
-- `ContinuationPoint`: one attempted parameter value and its solver outcome.
-- `SolutionFamily`: requested values, all attempts, accepted solutions, tracking, plotting, and diagnostics.
-- `continue_parameter(...)`: orchestration function.
+```text
+Higher-order expression API
+        |
+        v
+expression validation / state layout
+        |
+        v
+automatic first-order compiler
+        |
+        v
+BVPProblem
+   |         |
+ SciPy      PINN
+```
 
-## Classical continuation
+`HigherOrderBVP(...)` is intentionally a constructor/factory that returns the established `BVPProblem`. This avoids a parallel solver hierarchy and preserves compatibility with diagnostics, benchmarking, mesh/guess handling, unknown parameters, and continuation.
 
-For an accepted classical solution, the complete state is reused through the v0.6 previous-solution guess mechanism. This is backend-independent at the `BVPSolution` level and avoids exposing SciPy internals.
+## Default notation
 
-## Adaptive recovery
+The module exports default `x` and `y` symbols. `d(y)` therefore means `dy/dx` and `d2(y)` means `d2y/dx2`. Explicit `IndependentVariable` and `DependentVariable` objects are available when users need different symbols or simultaneous systems.
 
-v0.7 uses natural continuation rather than pseudo-arclength continuation. When a target fails and an accepted source solution exists, the interval is reduced according to `reduction_factor` until the target can be approached or retry/minimum-step limits are reached.
+## Differential-order inference
 
-An optional `max_step` proactively inserts intermediate points before a large jump.
+For a dependent variable declared with `order=None`, the compiler infers the order from the highest derivative appearing in the formulation. Explicit orders are recommended for simultaneous/mixed-order systems and are validated against used derivatives.
 
-All attempts are recorded; `SolutionFamily.requested_results` reports the final outcome for each user-requested value.
+## First-order conversion
 
-## Unknown parameters during continuation
+For each variable of order `m`, the compiler creates states corresponding to derivative orders `0` through `m-1`. The governing equations determine the order-`m` derivatives.
 
-The fixed continuation parameter and unknown BVP parameters are deliberately distinct. At each new point, unknown-parameter initial values may be replaced by the values recovered from the preceding accepted solution. The original `BVPProblem` is never mutated.
+The compiler supports equations affine in the highest derivatives. For simultaneous systems, it forms a coefficient matrix for the highest derivatives and solves the resulting small linear system pointwise. Nonlinear dependence on a highest derivative is rejected with a formulation error.
 
-## PINN warm starts
+This supports systems such as:
 
-v0.7 extends the PINN backend with an optional `pinn_warm_start` solution. Compatible network `state_dict` values are copied into a newly constructed model after device/dtype resolution. Solved unknown parameters are also reused as initial trainable values.
+```text
+u''' + v'' = f1(...)
+u''' - v'' = f2(...)
+```
 
-This keeps each continuation point as an independent `BVPSolution` while allowing efficient neural continuation.
+without manual isolation by the user.
 
-Warm starts require the same domain, number of equations, and compatible network architecture.
+## Backend-neutral expressions
 
-## Acceptance policy
+Arithmetic expression trees are evaluated against either NumPy arrays or PyTorch tensors. High-level problems therefore generate both `equations`/`boundary_conditions` and `pinn_equations`/`pinn_boundary_conditions` automatically.
 
-By default a continuation point is accepted only when `solution.success` is true. This is intentionally conservative. A custom `accept_solution(solution)` callback is available for experimental PINN studies with explicitly documented residual criteria.
+The current backend-neutral function set is `exp`, `sin`, `cos`, `tanh`, `sqrt`, and `log`.
 
-## Deliberate v0.7 limitations
+## Boundary conditions
 
-v0.7 does not implement:
+High-level boundary conditions use explicit endpoint location nodes created by `.at(...)`. v0.8 validates that all locations are the two domain endpoints and that the number of residuals equals:
 
+```text
+number of compiled first-order states + number of unknown scalar parameters
+```
+
+Boundary conditions on derivative orders below the governing order are supported. Boundary conditions directly on the highest derivative remain outside the current high-level compiler.
+
+## Parameters
+
+High-level `Parameter("a", value=...)` objects compile to fixed entries in `BVPProblem.parameters`. `Parameter("k", initial=..., unknown=True)` compiles to the existing v0.5 `UnknownParameter` representation.
+
+The original low-level `UnknownParameter` API is unchanged.
+
+## Continuation retention
+
+v0.8 adds three returned-family storage policies:
+
+- `all`: retain requested and adaptive intermediate full solutions; this is the compatibility default.
+- `requested`: discard full adaptive-intermediate solutions after continuation completes.
+- `final`: retain only the final requested full solution.
+
+All attempted points keep lightweight status, timing, warm-start, and residual metrics through `SolutionFamily.history`.
+
+`continue_to(...)` uses `save="final"` and returns the final `BVPSolution` directly.
+
+## Jacobians and singular systems
+
+The low-level `BVPProblem` now accepts optional `equations_jacobian` and `boundary_jacobian` callbacks, which are adapted and forwarded to SciPy's collocation backend. A SciPy-compatible `singular_matrix` may also be provided.
+
+v0.8 does not claim automatic symbolic Jacobian generation for arbitrary high-level expressions. SciPy's own numerical Jacobian estimation remains the default when analytical callbacks are absent.
+
+## Backward compatibility policy
+
+All public regression tests inherited from v0.1-v0.7 are run unchanged. New features are additive. Existing first-order callbacks, separate PINN callbacks, unknown parameters, mesh and guess APIs, residual diagnostics, benchmarking, device selection, and continuation remain supported.
+
+The next release, v0.9, should focus on API freeze, documentation consistency, packaging cleanup, CI, cross-platform tests, and release-candidate hardening rather than major new mathematics.
+
+## Deliberate v0.8 limitations
+
+v0.8 does not implement:
+
+- differential-algebraic equations;
+- nonlinear equations in the highest derivatives;
+- interior/multipoint boundary conditions in the high-level API;
+- automatic symbolic Jacobian generation;
 - pseudo-arclength continuation;
-- automatic fold/turning-point traversal;
-- bifurcation classification;
-- stability analysis;
-- two-parameter continuation surfaces;
-- automatic branch switching.
-
-These capabilities require a more specialized continuation formulation and are intentionally outside this release.
+- automatic fold/bifurcation detection;
+- stability analysis or branch switching.

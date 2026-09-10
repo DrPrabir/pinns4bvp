@@ -1,0 +1,50 @@
+"""Higher-order mathematical formulation API introduced in PINNs4BVP v0.8."""
+
+from pinns4bvp.formulation.compiler import FormulationMetadata, StateEntry
+from pinns4bvp.formulation.expressions import (
+    BoundaryCondition,
+    DependentVariable,
+    Equation,
+    Expression,
+    IndependentVariable,
+    Parameter,
+    cos,
+    d,
+    d2,
+    d3,
+    d4,
+    derivative,
+    exp,
+    log,
+    sin,
+    sqrt,
+    tanh,
+    x,
+    y,
+)
+from pinns4bvp.formulation.problem import HigherOrderBVP
+
+__all__ = [
+    "Expression",
+    "IndependentVariable",
+    "DependentVariable",
+    "Parameter",
+    "Equation",
+    "BoundaryCondition",
+    "HigherOrderBVP",
+    "FormulationMetadata",
+    "StateEntry",
+    "x",
+    "y",
+    "derivative",
+    "d",
+    "d2",
+    "d3",
+    "d4",
+    "exp",
+    "sin",
+    "cos",
+    "tanh",
+    "sqrt",
+    "log",
+]

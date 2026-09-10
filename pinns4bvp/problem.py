@@ -41,6 +41,10 @@ class BVPProblem:
     name: str = "Boundary-value problem"
     pinn_equations: Callable | None = None
     pinn_boundary_conditions: Callable | None = None
+    equations_jacobian: Callable | None = None
+    boundary_jacobian: Callable | None = None
+    singular_matrix: Array | None = None
+    formulation_metadata: object | None = None
 
     def __post_init__(self) -> None:
         if not callable(self.equations):
@@ -53,6 +57,10 @@ class BVPProblem:
             self.pinn_boundary_conditions
         ):
             raise TypeError("pinn_boundary_conditions must be callable or None")
+        if self.equations_jacobian is not None and not callable(self.equations_jacobian):
+            raise TypeError("equations_jacobian must be callable or None")
+        if self.boundary_jacobian is not None and not callable(self.boundary_jacobian):
+            raise TypeError("boundary_jacobian must be callable or None")
 
         if len(self.domain) != 2:
             raise ValueError("domain must be a tuple (a, b)")
@@ -91,6 +99,17 @@ class BVPProblem:
                     f"unknown_parameters['{key}'] must be an UnknownParameter"
                 )
         self.unknown_parameters = unknown
+
+        if self.singular_matrix is not None:
+            S = np.asarray(self.singular_matrix, dtype=float)
+            if S.shape != (self.n_equations, self.n_equations):
+                raise ValueError(
+                    "singular_matrix must have shape "
+                    f"({self.n_equations}, {self.n_equations})"
+                )
+            if not np.all(np.isfinite(S)):
+                raise ValueError("singular_matrix must contain only finite values")
+            self.singular_matrix = S
 
         if self.variable_names is None:
             self.variable_names = tuple(f"y{i}" for i in range(self.n_equations))
@@ -185,15 +204,52 @@ class BVPProblem:
         fixed.update(updates)
         return replace(self, parameters=fixed)
 
-    def continue_parameter(self, parameter: str, values, **kwargs):
+    def solve(self, **kwargs):
+        """Solve this problem using :func:`pinns4bvp.solve`."""
+
+        from pinns4bvp.solver import solve
+
+        return solve(self, **kwargs)
+
+    def continue_parameter(self, parameter, values=None, **kwargs):
         """Run one-parameter natural continuation from this problem.
 
-        This is a convenience wrapper around :func:`pinns4bvp.continue_parameter`.
+        ``parameter`` may be a parameter name or a high-level v0.8
+        :class:`Parameter` object.  Existing v0.7 calls with an explicit
+        ``values`` sequence remain valid.
         """
 
         from pinns4bvp.continuation import continue_parameter
 
         return continue_parameter(self, parameter, values, **kwargs)
+
+    def continue_to(self, parameter, target, *, start=None, step, **kwargs):
+        """Use continuation as a numerical strategy to reach one target value.
+
+        Only the final full solution is returned. A lightweight continuation
+        diagnostic record is attached to ``solution.metadata``.
+        """
+
+        from pinns4bvp.continuation import continue_parameter
+
+        family = continue_parameter(
+            self,
+            parameter,
+            values=None,
+            start=start,
+            stop=target,
+            step=step,
+            save="final",
+            **kwargs,
+        )
+        sol = family.final_solution
+        if sol is None:
+            raise RuntimeError(
+                f"continuation did not reach final target {family.parameter_name}={target}"
+            )
+        sol.metadata["continuation_diagnostics"] = family.diagnostics
+        sol.metadata["continuation_history"] = family.history
+        return sol
 
     def variable_index(self, variable: str | int) -> int:
         if isinstance(variable, int):
@@ -229,6 +285,18 @@ class BVPProblem:
                 f"({self.n_boundary_residuals}); got {values.size}"
             )
         return values
+
+    def evaluate_equations_jacobian(self, x, y, unknown_values=None):
+        if self.equations_jacobian is None:
+            raise ValueError("equations_jacobian was not supplied for this problem")
+        p = self.parameter_mapping(unknown_values)
+        return self.equations_jacobian(x, y, p)
+
+    def evaluate_boundary_jacobian(self, ya, yb, unknown_values=None):
+        if self.boundary_jacobian is None:
+            raise ValueError("boundary_jacobian was not supplied for this problem")
+        p = self.parameter_mapping(unknown_values)
+        return self.boundary_jacobian(ya, yb, p)
 
     def evaluate_pinn_equations(self, x, y, unknown_values=None):
         if self.pinn_equations is None:

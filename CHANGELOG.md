@@ -1,34 +1,50 @@
 # Changelog
 
+## 0.8.0.dev0
+
+### Added
+
+- Higher-order mathematical formulation package `pinns4bvp.formulation`.
+- Default `x` and `y` symbols for ordinary `y(x)` problems.
+- `IndependentVariable`, `DependentVariable`, `Parameter`, `Equation`, and `HigherOrderBVP` APIs.
+- `d`, `d2`, `d3`, `d4`, and general `derivative(..., order=n)` helpers.
+- Backend-neutral `exp`, `sin`, `cos`, `tanh`, `sqrt`, and `log` expression functions.
+- Automatic first-order conversion for scalar higher-order equations.
+- Automatic first-order conversion for simultaneous and mixed-order systems.
+- Linear coupled highest-derivative system handling.
+- Endpoint boundary-condition notation with `.at(...)`.
+- High-level known and unknown/eigen parameters.
+- Automatic boundary-condition count and formulation validation.
+- `BVPSolution.derivative(...)` convenience method.
+- Continuation `start`/`stop`/`step` sequence generation.
+- Continuation storage policies `all`, `requested`, and `final`.
+- Lightweight `SolutionFamily.history` under every storage policy.
+- `SolutionFamily.final_solution` and `BVPProblem.continue_to(...)`.
+- Optional low-level `equations_jacobian`, `boundary_jacobian`, and `singular_matrix` hooks for SciPy collocation.
+- Higher-order linear/nonlinear, simultaneous, mixed-order, eigenvalue, continuation, and PINN examples.
+- v0.8 formulation, retention-policy, Jacobian, and validation regression tests.
+
+### Changed
+
+- `BVPProblem` gains a `solve(...)` convenience method.
+- `BVPProblem.continue_parameter(...)` accepts high-level named `Parameter` objects and optional generated ranges.
+- `continue_parameter(...)` accepts either explicit `values` or `start`/`stop`/`step`.
+- Package version advanced to `0.8.0.dev0`.
+
+### Compatibility
+
+- The low-level first-order `BVPProblem` interface remains supported.
+- Existing separate NumPy/PyTorch callbacks remain supported.
+- v0.5 unknown parameters/eigenvalue APIs remain supported.
+- v0.6 mesh, reusable guess, residual-diagnostic, and CPU/CUDA/MPS APIs remain supported.
+- v0.7 natural continuation, adaptive recovery, `SolutionFamily`, and PINN warm-start behavior remain supported.
+- `save="all"` is the default continuation retention policy so v0.7 intermediate-solution behavior is preserved.
+
 ## 0.7.0.dev0
 
 ### Added
 
-- `ContinuationConfig` for natural parameter continuation and adaptive recovery.
-- `continue_parameter(...)` public API.
-- `BVPProblem.continue_parameter(...)` convenience wrapper.
-- `ContinuationPoint`, `SolutionFamily`, and `ContinuationDiagnostics`.
-- Automatic reuse of previous classical solutions as initial guesses.
-- Optional `max_step` subdivision and failed-step interval reduction.
-- Continuation with simultaneous v0.5 unknown-parameter/eigenvalue solving.
-- Family tracking, evaluation, profile plotting, and tracked-response plotting.
-- Experimental PINN model warm starts between continuation points.
-- Warm starts for solved unknown PINN parameters.
-- Linear, Bratu, eigenvalue-continuation, and PINN-continuation examples.
-- v0.7 continuation and PINN warm-start regression tests.
-
-### Changed
-
-- `solve(...)` accepts `pinn_warm_start` for compatible previous PINN solutions.
-- PINN training accepts an initial model state and optional unknown-parameter initial values.
-- `BVPProblem.with_parameters(...)` returns a non-mutating parameter-updated problem copy.
-- Package version advanced to `0.7.0.dev0`.
-
-### Compatibility
-
-- v0.6 mesh, guess, residual-diagnostic, and CPU/CUDA/MPS APIs are retained.
-- v0.5 fixed/unknown parameter APIs are retained.
-- Classical `solve(...)` and existing PINN calls remain backward compatible.
+- Natural one-parameter continuation, adaptive recovery, `SolutionFamily`, and PINN warm starts.
 
 ## 0.6.0.dev0
 
