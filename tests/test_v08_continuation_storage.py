@@ -105,3 +105,50 @@ def test_high_level_pinn_continuation_reuses_weights():
     assert family.success
     assert family.requested_results[0].solution.metadata["warm_start_used"] is False
     assert family.requested_results[1].solution.metadata["warm_start_used"] is True
+
+
+def test_start_stop_step_equal_max_step_avoids_float_recursion():
+    """Regression: decimal step == max_step must not recurse forever."""
+    from pinns4bvp import ContinuationConfig
+
+    problem, lam = _problem()
+    family = problem.continue_parameter(
+        lam,
+        start=0.1,
+        stop=0.5,
+        step=0.1,
+        save="requested",
+        solve_kwargs={"tol": 1e-9},
+        config=ContinuationConfig(
+            adaptive=True,
+            min_step=0.00625,
+            max_step=0.1,
+        ),
+    )
+    assert family.success
+    assert np.allclose(family.requested_values, [0.1, 0.2, 0.3, 0.4, 0.5])
+    assert np.allclose(family.values, [0.1, 0.2, 0.3, 0.4, 0.5])
+
+
+def test_max_step_subdivision_still_makes_progress():
+    """A genuinely larger gap should still be subdivided successfully."""
+    from pinns4bvp import ContinuationConfig
+
+    problem, lam = _problem()
+    family = problem.continue_parameter(
+        lam,
+        [0.0, 0.3],
+        save="all",
+        solve_kwargs={"tol": 1e-9},
+        config=ContinuationConfig(
+            adaptive=True,
+            min_step=0.01,
+            max_step=0.1,
+        ),
+    )
+    assert family.success
+    assert np.allclose(family.requested_values, [0.0, 0.3])
+    accepted_values = [p.value for p in family.points if p.accepted]
+    assert any(np.isclose(v, 0.1) for v in accepted_values)
+    assert any(np.isclose(v, 0.2) for v in accepted_values)
+    assert any(np.isclose(v, 0.3) for v in accepted_values)

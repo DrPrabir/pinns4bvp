@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.8.0.dev1
+
+### Fixed
+
+- Fixed an infinite-recursion bug in parameter continuation when a decimal `step` (for example `0.1`) was mathematically equal to `ContinuationConfig.max_step` but differed by floating-point roundoff.
+- Added machine-precision-tolerant max-step comparison and no-progress guards for proactive continuation subdivision.
+- Added regression tests for `start=0.1, stop=0.5, step=0.1, max_step=0.1` and for genuine max-step subdivision.
+
 ## 0.8.0.dev0
 
 ### Added

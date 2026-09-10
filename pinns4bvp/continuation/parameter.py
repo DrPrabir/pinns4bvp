@@ -233,13 +233,63 @@ def continue_parameter(
         return point
 
     def advance(source_solution, source_value, target, *, requested, retry_level):
+        # Floating-point continuation values such as 0.1, 0.2, 0.3 do not
+        # have exact binary representations.  A requested gap that is
+        # mathematically equal to max_step can therefore appear very slightly
+        # larger (for example 0.10000000000000003 > 0.1).  Without a tolerance
+        # this caused the proactive max-step splitter to recurse forever on an
+        # intermediate value that was numerically the same as the target.
+        if source_value is not None:
+            gap = abs(float(target) - float(source_value))
+            scale = max(
+                1.0,
+                abs(float(target)),
+                abs(float(source_value)),
+                0.0 if config.max_step is None else abs(float(config.max_step)),
+            )
+            step_tol = 64.0 * np.finfo(float).eps * scale
+        else:
+            gap = 0.0
+            step_tol = 0.0
+
         if (
             source_solution is not None
             and config.max_step is not None
-            and abs(target - source_value) > config.max_step
+            and gap > float(config.max_step) + step_tol
         ):
             direction = 1.0 if target > source_value else -1.0
-            intermediate = source_value + direction * config.max_step
+            intermediate = float(source_value) + direction * float(config.max_step)
+
+            # Guard against a no-progress split at machine precision.
+            if abs(float(target) - intermediate) <= step_tol:
+                intermediate = float(target)
+
+            if abs(intermediate - float(source_value)) <= step_tol:
+                point = attempt(
+                    target,
+                    requested=requested,
+                    source_solution=source_solution,
+                    source_value=source_value,
+                    retry_level=retry_level,
+                )
+                if point.accepted:
+                    return point.solution, float(target), True
+                return source_solution, source_value, False
+
+            # If the split lands on the target (within tolerance), attempt the
+            # target directly instead of recursing with an identical interval.
+            if abs(float(target) - intermediate) <= step_tol:
+                point = attempt(
+                    target,
+                    requested=requested,
+                    source_solution=source_solution,
+                    source_value=source_value,
+                    retry_level=retry_level,
+                )
+                if point.accepted:
+                    return point.solution, float(target), True
+                return source_solution, source_value, False
+
             inter_sol, inter_val, reached = advance(
                 source_solution,
                 source_value,
