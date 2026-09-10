@@ -1,3 +1,10 @@
+## [0.8.0.dev2] - 2026-09-10
+
+### Fixed
+
+- Fixed PINN evaluation of backend-neutral functions applied to fixed scalar parameters, such as `exp(K)` in expressions like `cosh(K*y)/cosh(K)`.
+- `exp`, `sin`, `cos`, `tanh`, `sqrt`, and `log` now accept both PyTorch tensors and scalar fixed-parameter values in the high-level formulation backend.
+
 # Changelog
 
 ## 0.8.0.dev1

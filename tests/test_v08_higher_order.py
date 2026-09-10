@@ -210,3 +210,27 @@ def test_high_level_problem_can_run_through_pinn_backend():
     assert sol.metadata["backend"] == "pinn"
     assert sol.metadata["device_resolved"] == "cpu"
     assert sol.y.shape[0] == 2
+
+
+def test_pinn_backend_functions_accept_fixed_scalar_parameters():
+    torch = pytest.importorskip("torch")
+    from pinns4bvp import IndependentVariable, DependentVariable
+
+    Y = IndependentVariable("y")
+    u = DependentVariable("u", order=2)
+    K = Parameter("K", value=5.0)
+
+    # Regression for Figure 10-style cosh(K*y)/cosh(K), written via exp.
+    cosh_KY = 0.5 * (exp(K * Y) + exp(-K * Y))
+    cosh_K = 0.5 * (exp(K) + exp(-K))
+    problem = HigherOrderBVP(
+        equation=Equation(d2(u, Y) + cosh_KY / cosh_K, 0.0),
+        boundary_conditions=[u.at(-1.0) == 0.0, u.at(1.0) == 0.0],
+        domain=(-1.0, 1.0),
+    )
+
+    coord = torch.linspace(-1.0, 1.0, 9)
+    state = torch.stack((torch.zeros_like(coord), torch.zeros_like(coord)))
+    rhs = problem.evaluate_pinn_equations(coord, state)
+    assert tuple(rhs.shape) == tuple(state.shape)
+    assert torch.isfinite(rhs).all()

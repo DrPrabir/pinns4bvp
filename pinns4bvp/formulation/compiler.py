@@ -172,10 +172,30 @@ def _backend_function(name, value, backend):
     if backend == "numpy":
         fn = getattr(np, name)
         return fn(value)
+
+    import math
     import torch
 
-    fn = getattr(torch, name)
-    return fn(value)
+    # PyTorch elementary functions require tensor inputs.  High-level
+    # expressions may legitimately contain functions of fixed scalar
+    # parameters (for example exp(K) in cosh(K)); keep those as ordinary
+    # Python scalars so they broadcast naturally when combined with tensors.
+    if torch.is_tensor(value):
+        fn = getattr(torch, name)
+        return fn(value)
+
+    scalar_functions = {
+        "exp": math.exp,
+        "sin": math.sin,
+        "cos": math.cos,
+        "tanh": math.tanh,
+        "sqrt": math.sqrt,
+        "log": math.log,
+    }
+    try:
+        return scalar_functions[name](float(value))
+    except KeyError as exc:
+        raise ValueError(f"unsupported backend-neutral function '{name}'") from exc
 
 
 def _evaluate(expr, *, coordinate, state, parameters, state_index, backend):
