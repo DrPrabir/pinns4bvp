@@ -1,8 +1,8 @@
-# PINNs4BVP v0.5 development snapshot
+# PINNs4BVP v0.6 development snapshot
 
-PINNs4BVP is a general-purpose Python framework for two-point boundary-value problems with classical collocation and physics-informed neural-network backends.
+PINNs4BVP is a general-purpose Python framework for two-point boundary-value problems with classical collocation and physics-informed neural-network (PINN) backends.
 
-**v0.5 adds unknown scalar parameters and eigenvalue BVPs.** Unknown parameters are solved simultaneously with the state rather than through an external parameter-search loop.
+**v0.6 focus:** better initial meshes, richer initial guesses, independent residual diagnostics, and explicit PINN device selection for CPU, CUDA, and Apple MPS.
 
 > Status: alpha development snapshot. This is not yet a stable release.
 
@@ -12,147 +12,246 @@ PINNs4BVP is a general-purpose Python framework for two-point boundary-value pro
 python -m pip install -e ".[dev]"
 ```
 
-Classical-only users can install the base dependencies with:
+Classical-only use:
 
 ```bash
 python -m pip install -e .
 ```
 
-## Fixed versus unknown parameters
+## What is new in v0.6
 
-Fixed parameters remain ordinary scalars:
+- `MeshConfig` with uniform, left-clustered, right-clustered, and Chebyshev/cosine-clustered meshes.
+- Mesh spacing diagnostics through `mesh_quality(...)`.
+- Initial guesses from arrays, callables, variable mappings, previous solutions, or interpolated source data.
+- Backend-independent residual diagnostics through `sol.residual_report()`.
+- Residual plotting through `sol.plot_residuals()`.
+- PINN device choices: `cpu`, `cuda`, `mps`, and `auto`.
+- Device availability helpers and explicit device metadata in PINN solutions.
+- All v0.5 unknown-parameter and eigenvalue capabilities are retained.
+
+## Mesh control
 
 ```python
-parameters={"alpha": 2.0}
+from pinns4bvp.mesh import MeshConfig
+
+mesh = MeshConfig(
+    n_nodes=80,
+    kind="chebyshev",
+)
+
+sol = solve(problem, mesh=mesh)
 ```
 
-Unknown parameters are declared separately:
+Supported mesh kinds are:
+
+```text
+uniform
+left          # clusters near the left endpoint
+quadratic     # backward-compatible alias of left with power=2
+right         # clusters near the right endpoint
+chebyshev     # clusters near both endpoints
+```
+
+For power-law clustering:
+
+```python
+mesh = MeshConfig(n_nodes=80, kind="left", power=3.0)
+```
+
+Inspect the initial mesh used by a classical solve:
+
+```python
+print(sol.metadata["initial_mesh_quality"].summary())
+```
+
+## Better initial guesses
+
+The classical backend accepts several guess forms.
+
+Zeros:
+
+```python
+sol = solve(problem, guess="zeros")
+```
+
+Callable:
+
+```python
+def guess(x):
+    return np.vstack((x * (1 - x), 1 - 2*x))
+
+sol = solve(problem, guess=guess)
+```
+
+Variable mapping:
+
+```python
+sol = solve(
+    problem,
+    guess={
+        "y": lambda x: x * (1 - x),
+        "yp": 0.0,
+    },
+)
+```
+
+Reuse a previous solution on a different mesh:
+
+```python
+from pinns4bvp.guess import guess_from_solution
+
+sol1 = solve(problem, n_mesh=30)
+sol2 = solve(
+    problem,
+    n_mesh=100,
+    guess=guess_from_solution(sol1),
+)
+```
+
+A previous `BVPSolution` may also be supplied directly as `guess=sol1`.
+
+## Independent residual diagnostics
+
+After either a classical or PINN solve:
+
+```python
+report = sol.residual_report(n_points=301)
+print(report.summary())
+```
+
+The diagnostic residual is evaluated independently as
+
+$$
+R(x) = y'(x) - f(x,y,p).
+$$
+
+The report provides:
+
+- global ODE RMS residual;
+- global maximum absolute ODE residual;
+- per-equation RMS and maximum residuals;
+- maximum boundary-condition residual.
+
+A residual plot is available with:
+
+```python
+sol.plot_residuals()
+```
+
+## PINN device selection
+
+PINNs4BVP v0.6 supports the following device requests:
+
+```python
+from pinns4bvp.pinn import PINNConfig
+
+cpu = PINNConfig(device="cpu", dtype="float64")
+cuda = PINNConfig(device="cuda", dtype="float64")
+mps = PINNConfig(device="mps", dtype="float32")
+auto = PINNConfig(device="auto", dtype="float64")
+```
+
+### CPU
+
+```python
+PINNConfig(device="cpu", dtype="float64")
+```
+
+CPU remains the conservative default for small BVPs and reproducible float64 experiments.
+
+### CUDA
+
+```python
+PINNConfig(device="cuda", dtype="float64")
+```
+
+CUDA is used only when the current PyTorch installation reports it as available. An unavailable explicit CUDA request raises a clear error.
+
+### Apple MPS
+
+```python
+PINNConfig(device="mps", dtype="float32")
+```
+
+MPS is intended for supported Apple Silicon/macOS PyTorch installations. v0.6 deliberately requires float32 for an explicit MPS request rather than assuming float64 MPS support across supported environments.
+
+### Automatic selection
+
+```python
+PINNConfig(device="auto", dtype="float32")
+```
+
+`auto` uses the following policy:
+
+1. CUDA, when available;
+2. MPS, when available and `dtype="float32"`;
+3. CPU otherwise.
+
+For `dtype="float64"`, `auto` prefers CUDA when available and otherwise uses CPU, preserving the requested precision instead of silently changing dtype.
+
+Inspect device availability:
+
+```python
+from pinns4bvp.pinn import available_devices, device_summary
+
+print(available_devices())
+print(device_summary())
+```
+
+A PINN result records both the requested and resolved device:
+
+```python
+print(sol.metadata["device_requested"])
+print(sol.metadata["device_resolved"])
+```
+
+## Unknown parameters and eigenvalue BVPs
+
+v0.5 functionality remains available:
 
 ```python
 from pinns4bvp import UnknownParameter
 
-unknown_parameters={"k": UnknownParameter(initial=3.0)}
-```
-
-Callbacks receive one combined parameter mapping, so both fixed and unknown values are accessed in the same way:
-
-```python
-def equations(x, y, p):
-    k = p["k"]
-    return ...
-```
-
-For `n` state equations and `k` unknown parameters, the boundary callback must return exactly `n + k` residuals.
-
-## Eigenvalue example
-
-Solve
-
-\[
-y'' + k^2 y = 0, \qquad 0 \le x \le 1,
-\]
-
-with
-
-\[
-y(0)=0, \qquad y(1)=0, \qquad y'(0)=1.
-\]
-
-The normalization removes the trivial solution and the first positive eigenvalue is `k = pi`.
-
-```python
-import numpy as np
-from pinns4bvp import BVPProblem, UnknownParameter, solve
-
-
-def fun(x, y, p):
-    k = p["k"]
-    return np.vstack((y[1], -(k**2) * y[0]))
-
-
-def bc(ya, yb, p):
-    return np.array((ya[0], yb[0], ya[1] - 1.0))
-
-
-def guess(x):
-    k0 = 3.0
-    return np.vstack((np.sin(k0*x)/k0, np.cos(k0*x)))
-
-
 problem = BVPProblem(
-    equations=fun,
-    boundary_conditions=bc,
-    domain=(0.0, 1.0),
-    n_equations=2,
-    unknown_parameters={"k": UnknownParameter(3.0)},
-    variable_names=("y", "yp"),
+    ...,
+    unknown_parameters={"k": UnknownParameter(initial=3.0)},
 )
-
-sol = solve(problem, guess=guess, tol=1e-9)
-print(sol.parameters["k"])
 ```
 
-The bundled collocation example recovers `k` approximately equal to `pi`.
+Unknown parameters can be solved by both the SciPy collocation and PINN backends.
 
-Run it with:
+## Examples
+
+Run the v0.6 diagnostics example:
 
 ```bash
-python -m pinns4bvp.examples.eigenvalue_bvp
+python -m pinns4bvp.examples.residual_diagnostics
 ```
 
-## PINN unknown-parameter solving
-
-The PINN backend jointly optimizes neural-network weights and unknown scalar parameters. PyTorch-native equation and boundary callbacks are still required in the alpha API.
+Inspect available PINN devices:
 
 ```bash
-python -m pinns4bvp.examples.pinn_eigenvalue_bvp
+python -m pinns4bvp.examples.device_selection
 ```
 
-Training history records the evolution of unknown parameters as well as ODE loss, BC loss, and gradient norms.
+Earlier examples remain available, including linear, Bratu, Blasius, benchmarking, and eigenvalue problems.
 
-## Accessing solved parameters
-
-```python
-sol.parameters
-sol.parameters["k"]
-sol.parameter("k")
-sol.unknown_parameters
-```
-
-Fixed parameters and solved unknown parameters are both preserved in `sol.parameters`.
-
-## Benchmarking unknown parameters
-
-v0.5 extends the v0.4 benchmark framework with exact parameter references:
-
-```python
-report = benchmark_problem(
-    problem,
-    exact_parameters={"k": np.pi},
-    run_pinn=False,
-    numerical_kwargs={"guess": guess, "tol": 1e-9},
-)
-
-print(report.summary())
-```
-
-Parameter reports include the reference value, estimated value, absolute error, and relative error.
-
-## Current limitations
-
-- Unknown parameters are scalar and unconstrained in v0.5.
-- Parameter bounds/transforms are not yet implemented.
-- This is not yet a general data-driven inverse-problem API.
-- PINN callbacks must currently be provided separately from NumPy callbacks.
-- Eigenvalue branch selection depends on the initial state/parameter guess, as expected for nonlinear BVP solvers.
-
-## Tests
+## Testing
 
 ```bash
 pytest -v
 ```
 
-The development snapshot includes tests for classical unknown-parameter solving, PINN parameter learning, parameter diagnostics, and exact-parameter benchmarking.
+The v0.6 development suite includes regression tests for all earlier capabilities plus mesh generation, interpolated/reused guesses, residual diagnostics, and device selection.
+
+## Current limitations
+
+- Classical callbacks use NumPy while PINN callbacks are PyTorch-native in the current alpha API.
+- Unknown parameters are scalar and unconstrained.
+- `mps` is intentionally restricted to `float32` in v0.6.
+- Availability of CUDA/MPS depends on the installed PyTorch build and host hardware.
+- Device-specific numerical trajectories can differ even with identical seeds.
+- This release does not yet implement adaptive continuation or higher-order equation syntax.
 
 ## License
 

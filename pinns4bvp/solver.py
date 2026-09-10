@@ -5,7 +5,13 @@ import numpy as np
 from pinns4bvp.backends.scipy_backend import solve_with_scipy
 from pinns4bvp.diagnostics.convergence import build_convergence_report
 from pinns4bvp.guess.initial_guess import create_initial_guess
-from pinns4bvp.mesh.initial_mesh import create_initial_mesh, validate_mesh
+from pinns4bvp.mesh.initial_mesh import (
+    MeshConfig,
+    mesh_from_config,
+    mesh_quality,
+    create_initial_mesh,
+    validate_mesh,
+)
 from pinns4bvp.problem import BVPProblem
 from pinns4bvp.solution import BVPSolution
 
@@ -15,9 +21,10 @@ def solve(
     *,
     method: str = "collocation",
     pinn_config=None,
-    mesh: np.ndarray | None = None,
+    mesh: np.ndarray | MeshConfig | None = None,
     n_mesh: int = 50,
     mesh_kind: str = "uniform",
+    mesh_power: float = 2.0,
     guess=None,
     tol: float = 1e-5,
     bc_tol: float | None = None,
@@ -25,7 +32,12 @@ def solve(
     verbose: int = 0,
     raise_on_failure: bool = False,
 ) -> BVPSolution:
-    """Solve a :class:`BVPProblem` with a selected backend."""
+    """Solve a :class:`BVPProblem` with a selected backend.
+
+    Classical solves accept either a user mesh array, a :class:`MeshConfig`, or
+    the legacy ``n_mesh``/``mesh_kind`` arguments.  Initial guesses may be
+    arrays, callables, mappings, previous solutions, or interpolating guesses.
+    """
 
     if not isinstance(problem, BVPProblem):
         raise TypeError("problem must be an instance of BVPProblem")
@@ -43,7 +55,14 @@ def solve(
         raise ValueError("method must be 'collocation'/'scipy' or 'pinn'")
 
     if mesh is None:
-        x = create_initial_mesh(problem.domain, n_mesh, kind=mesh_kind)
+        x = create_initial_mesh(
+            problem.domain,
+            n_mesh,
+            kind=mesh_kind,
+            power=mesh_power,
+        )
+    elif isinstance(mesh, MeshConfig):
+        x = mesh_from_config(problem.domain, mesh)
     else:
         x = validate_mesh(mesh, problem.domain)
 
@@ -68,7 +87,10 @@ def solve(
         diagnostics=report,
         parameters=parameter_values,
         _raw_solution=raw,
-        metadata={"backend": "scipy"},
+        metadata={
+            "backend": "scipy",
+            "initial_mesh_quality": mesh_quality(x, problem.domain),
+        },
     )
     if raise_on_failure and not solution.success:
         raise RuntimeError(solution.summary())

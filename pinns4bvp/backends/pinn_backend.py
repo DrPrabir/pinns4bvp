@@ -13,11 +13,11 @@ from pinns4bvp.pinn.trainer import train_pinn
 from pinns4bvp.solution import BVPSolution
 
 
-def _make_evaluator(model, problem, config):
+def _make_evaluator(model, problem, config, *, resolved_device: str):
     import torch
 
     dtype = {"float32": torch.float32, "float64": torch.float64}[config.dtype]
-    device = torch.device(config.device)
+    device = torch.device(resolved_device)
 
     def evaluate(x, *, derivative: int = 0):
         arr = np.asarray(x, dtype=float)
@@ -66,7 +66,12 @@ def solve_with_pinn(problem, *, config: PINNConfig | None = None, n_output: int 
     result = train_pinn(problem, model, config)
     model = result.model
     model.eval()
-    evaluator = _make_evaluator(model, problem, config)
+    evaluator = _make_evaluator(
+        model,
+        problem,
+        config,
+        resolved_device=result.device,
+    )
 
     x = np.linspace(problem.a, problem.b, n_output)
     y = evaluator(x)
@@ -110,5 +115,8 @@ def solve_with_pinn(problem, *, config: PINNConfig | None = None, n_output: int 
             "config": config,
             "model": model,
             "torch_version": torch.__version__,
+            "device_requested": config.device,
+            "device_resolved": result.device,
+            "dtype": config.dtype,
         },
     )

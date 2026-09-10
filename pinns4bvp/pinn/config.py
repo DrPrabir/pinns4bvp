@@ -7,11 +7,11 @@ from dataclasses import dataclass
 
 @dataclass(slots=True)
 class PINNConfig:
-    """Network, optimizer, and reproducibility settings for a PINN solve.
+    """Network, optimizer, reproducibility, precision, and device settings.
 
-    The defaults favor robust small/medium one-dimensional BVP experiments over
-    maximum speed.  ``float64`` and CPU execution are intentional defaults for
-    numerical reproducibility during the alpha releases.
+    ``device`` may be ``"cpu"``, ``"cuda"``, ``"mps"``, or ``"auto"``.
+    ``auto`` prefers CUDA; it uses MPS only for float32 and otherwise preserves
+    float64 by falling back to CPU.
     """
 
     hidden_layers: tuple[int, ...] = (64, 64, 64)
@@ -80,10 +80,14 @@ class PINNConfig:
 
         if not isinstance(self.seed, int):
             raise TypeError("seed must be an integer")
+        self.dtype = self.dtype.lower()
         if self.dtype not in {"float32", "float64"}:
             raise ValueError("dtype must be 'float32' or 'float64'")
         if not isinstance(self.device, str) or not self.device:
             raise ValueError("device must be a non-empty string")
+        self.device = self.device.lower().strip()
+        if self.device not in {"auto", "cpu", "cuda", "mps"}:
+            raise ValueError("device must be 'auto', 'cpu', 'cuda', or 'mps'")
 
         if self.loss_tolerance < 0:
             raise ValueError("loss_tolerance must be >= 0")

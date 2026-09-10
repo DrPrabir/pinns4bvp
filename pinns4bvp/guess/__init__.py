@@ -1,3 +1,7 @@
-from pinns4bvp.guess.initial_guess import create_initial_guess
+from pinns4bvp.guess.initial_guess import (
+    InterpolatedGuess,
+    create_initial_guess,
+    guess_from_solution,
+)
 
-__all__ = ["create_initial_guess"]
+__all__ = ["InterpolatedGuess", "create_initial_guess", "guess_from_solution"]

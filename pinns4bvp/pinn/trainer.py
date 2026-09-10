@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from pinns4bvp.diagnostics.pinn_training import PINNTrainingHistory
+from pinns4bvp.pinn.device import resolve_device
 from pinns4bvp.pinn.losses import compute_pinn_loss
 from pinns4bvp.pinn.parameters import PINNUnknownParameterSet
 from pinns4bvp.pinn.reproducibility import set_reproducibility
@@ -16,6 +17,7 @@ class PINNTrainingResult:
     history: PINNTrainingHistory
     x_collocation: object
     unknown_parameters: PINNUnknownParameterSet
+    device: str
 
 
 def _torch_dtype(name: str):
@@ -24,20 +26,27 @@ def _torch_dtype(name: str):
     return {"float32": torch.float32, "float64": torch.float64}[name]
 
 
-def _make_collocation(problem, config):
+def _make_collocation(problem, config, *, device: str):
     import torch
 
     dtype = _torch_dtype(config.dtype)
-    device = torch.device(config.device)
+    target = torch.device(device)
     if config.sampling == "uniform":
-        x = torch.linspace(problem.a, problem.b, config.n_collocation, dtype=dtype, device=device)
+        x = torch.linspace(
+            problem.a,
+            problem.b,
+            config.n_collocation,
+            dtype=dtype,
+            device=target,
+        )
     else:
+        # Generate deterministically on CPU then transfer to the requested device.
         generator = torch.Generator(device="cpu")
         generator.manual_seed(config.seed)
         r = torch.rand(config.n_collocation, generator=generator, dtype=dtype)
         x = problem.a + (problem.b - problem.a) * r
         x, _ = torch.sort(x)
-        x = x.to(device)
+        x = x.to(target)
     return x[:, None].detach().clone().requires_grad_(True)
 
 
@@ -58,10 +67,11 @@ def train_pinn(problem, model, config) -> PINNTrainingResult:
 
     set_reproducibility(config.seed, deterministic=config.deterministic)
     dtype = _torch_dtype(config.dtype)
-    device = torch.device(config.device)
+    resolved_device = resolve_device(config.device, dtype=config.dtype)
+    device = torch.device(resolved_device)
     model = model.to(device=device, dtype=dtype)
     unknown = PINNUnknownParameterSet(problem, dtype=dtype, device=device)
-    x_collocation = _make_collocation(problem, config)
+    x_collocation = _make_collocation(problem, config, device=resolved_device)
     history = PINNTrainingHistory()
 
     trainables = list(model.parameters()) + unknown.trainable()
@@ -196,8 +206,6 @@ def train_pinn(problem, model, config) -> PINNTrainingResult:
         elif history.stop_reason is None:
             history.stop_reason = "Adam + L-BFGS completed"
     elif history.stop_reason is None:
-        # Ensure a final record contains up-to-date parameter values if training
-        # stopped between history checkpoints.
         if history.final is not None and problem.n_unknown_parameters:
             final = compute_pinn_loss(
                 problem,
@@ -223,4 +231,5 @@ def train_pinn(problem, model, config) -> PINNTrainingResult:
         history=history,
         x_collocation=x_collocation,
         unknown_parameters=unknown,
+        device=resolved_device,
     )

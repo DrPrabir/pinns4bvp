@@ -91,6 +91,35 @@ class BVPSolution:
             return "\n".join(lines)
         return text
 
+
+    def residual_report(self, *, x=None, n_points: int = 201):
+        """Return independent ODE and boundary residual diagnostics."""
+
+        from pinns4bvp.diagnostics.residuals import compute_residual_report
+
+        return compute_residual_report(self, x=x, n_points=n_points)
+
+    def residuals(self, *, x=None, n_points: int = 201):
+        """Alias for :meth:`residual_report`."""
+
+        return self.residual_report(x=x, n_points=n_points)
+
+    def plot_residuals(self, *, x=None, n_points: int = 201, ax=None):
+        """Plot absolute ODE residuals for all state equations."""
+
+        import matplotlib.pyplot as plt
+
+        report = self.residual_report(x=x, n_points=n_points)
+        if ax is None:
+            _, ax = plt.subplots()
+        for i, name in enumerate(report.variable_names):
+            ax.semilogy(report.x, np.maximum(np.abs(report.ode_residuals[i]), 1e-300), label=name)
+        ax.set_xlabel("x")
+        ax.set_ylabel("|ODE residual|")
+        ax.grid(True, alpha=0.25)
+        ax.legend()
+        return ax
+
     def plot(self, variable: str | int = 0, *, derivative: int = 0, ax=None, **kwargs):
         import matplotlib.pyplot as plt
 
