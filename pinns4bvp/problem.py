@@ -171,6 +171,30 @@ class BVPProblem:
         values.update(resolved)
         return values
 
+
+    def with_parameters(self, **updates):
+        """Return a copy with updated fixed scalar parameters.
+
+        This convenience method is useful for parameter studies and does not
+        mutate the original problem.
+        """
+
+        from dataclasses import replace
+
+        fixed = dict(self.parameters)
+        fixed.update(updates)
+        return replace(self, parameters=fixed)
+
+    def continue_parameter(self, parameter: str, values, **kwargs):
+        """Run one-parameter natural continuation from this problem.
+
+        This is a convenience wrapper around :func:`pinns4bvp.continue_parameter`.
+        """
+
+        from pinns4bvp.continuation import continue_parameter
+
+        return continue_parameter(self, parameter, values, **kwargs)
+
     def variable_index(self, variable: str | int) -> int:
         if isinstance(variable, int):
             if 0 <= variable < self.n_equations:

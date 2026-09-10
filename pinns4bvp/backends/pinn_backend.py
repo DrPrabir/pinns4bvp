@@ -42,8 +42,18 @@ def _make_evaluator(model, problem, config, *, resolved_device: str):
     return evaluate
 
 
-def solve_with_pinn(problem, *, config: PINNConfig | None = None, n_output: int = 201):
-    """Solve ``problem`` with a PINN, including scalar unknown parameters."""
+def solve_with_pinn(
+    problem,
+    *,
+    config: PINNConfig | None = None,
+    n_output: int = 201,
+    warm_start=None,
+):
+    """Solve ``problem`` with a PINN, including scalar unknown parameters.
+
+    A previous compatible PINN ``BVPSolution`` may be supplied as
+    ``warm_start`` to reuse network weights and solved unknown-parameter values.
+    """
 
     import torch
 
@@ -63,7 +73,35 @@ def solve_with_pinn(problem, *, config: PINNConfig | None = None, n_output: int 
         hidden_layers=config.hidden_layers,
         activation=config.activation,
     )
-    result = train_pinn(problem, model, config)
+    warm_state = None
+    unknown_initial = None
+    warm_start_used = False
+    if warm_start is not None:
+        previous_model = getattr(warm_start, "metadata", {}).get("model")
+        if previous_model is None:
+            raise ValueError("PINN warm_start solution does not contain a trained model")
+        if warm_start.problem.n_equations != problem.n_equations:
+            raise ValueError("PINN warm_start has incompatible n_equations")
+        if tuple(warm_start.problem.domain) != tuple(problem.domain):
+            raise ValueError("PINN warm_start has an incompatible domain")
+        warm_state = {
+            key: value.detach().cpu().clone()
+            for key, value in previous_model.state_dict().items()
+        }
+        unknown_initial = {
+            name: warm_start.parameters[name]
+            for name in problem.unknown_parameter_names
+            if name in warm_start.parameters
+        }
+        warm_start_used = True
+
+    result = train_pinn(
+        problem,
+        model,
+        config,
+        warm_start_state=warm_state,
+        unknown_initial=unknown_initial,
+    )
     model = result.model
     model.eval()
     evaluator = _make_evaluator(
@@ -118,5 +156,6 @@ def solve_with_pinn(problem, *, config: PINNConfig | None = None, n_output: int 
             "device_requested": config.device,
             "device_resolved": result.device,
             "dtype": config.dtype,
+            "warm_start_used": warm_start_used,
         },
     )

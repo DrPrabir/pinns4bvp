@@ -1,8 +1,8 @@
-# PINNs4BVP v0.6 development snapshot
+# PINNs4BVP v0.7 development snapshot
 
 PINNs4BVP is a general-purpose Python framework for two-point boundary-value problems with classical collocation and physics-informed neural-network (PINN) backends.
 
-**v0.6 focus:** better initial meshes, richer initial guesses, independent residual diagnostics, and explicit PINN device selection for CPU, CUDA, and Apple MPS.
+**v0.7 focus:** natural parameter continuation, reusable nonlinear solution families, adaptive recovery from failed continuation steps, and experimental PINN warm starts.
 
 > Status: alpha development snapshot. This is not yet a stable release.
 
@@ -18,129 +18,243 @@ Classical-only use:
 python -m pip install -e .
 ```
 
-## What is new in v0.6
+## What is new in v0.7
 
-- `MeshConfig` with uniform, left-clustered, right-clustered, and Chebyshev/cosine-clustered meshes.
-- Mesh spacing diagnostics through `mesh_quality(...)`.
-- Initial guesses from arrays, callables, variable mappings, previous solutions, or interpolated source data.
-- Backend-independent residual diagnostics through `sol.residual_report()`.
-- Residual plotting through `sol.plot_residuals()`.
-- PINN device choices: `cpu`, `cuda`, `mps`, and `auto`.
-- Device availability helpers and explicit device metadata in PINN solutions.
-- All v0.5 unknown-parameter and eigenvalue capabilities are retained.
+- `continue_parameter(...)` for one-parameter natural continuation.
+- `BVPProblem.continue_parameter(...)` convenience method.
+- `ContinuationConfig` for adaptive recovery, step limits, failure handling, and diagnostics.
+- `SolutionFamily` and `ContinuationPoint` containers.
+- Automatic reuse of the previous classical solution as the next initial guess.
+- Optional proactive step subdivision through `max_step`.
+- Adaptive step reduction after failed solves.
+- Continuation can coexist with v0.5 unknown parameters/eigenvalue BVPs.
+- PINN continuation can warm-start compatible network weights from the previous accepted PINN solution.
+- Unknown PINN/BVP parameter estimates are also warm-started during continuation.
+- Family-level tracking, profile plotting, summaries, and solve-time diagnostics.
+- All v0.6 mesh, guess, residual-diagnostic, CPU/CUDA/MPS, and automatic-device features are retained.
 
-## Mesh control
+## Basic continuation
+
+Suppose a fixed parameter `lambda` is already declared in the problem:
 
 ```python
-from pinns4bvp.mesh import MeshConfig
-
-mesh = MeshConfig(
-    n_nodes=80,
-    kind="chebyshev",
+problem = BVPProblem(
+    equations=equations,
+    boundary_conditions=bc,
+    domain=(0.0, 1.0),
+    n_equations=2,
+    parameters={"lambda": 0.0},
+    variable_names=("y", "yp"),
 )
-
-sol = solve(problem, mesh=mesh)
 ```
 
-Supported mesh kinds are:
+Continue through a monotonic sequence:
+
+```python
+from pinns4bvp import continue_parameter
+
+family = continue_parameter(
+    problem,
+    parameter="lambda",
+    values=[0.0, 0.5, 1.0, 1.5, 2.0],
+    solve_kwargs={"tol": 1e-8},
+)
+
+print(family.summary())
+```
+
+The original `problem` is not mutated. A parameter-specific problem copy is constructed for each solve.
+
+The equivalent convenience form is:
+
+```python
+family = problem.continue_parameter(
+    "lambda",
+    [0.0, 0.5, 1.0, 1.5, 2.0],
+    solve_kwargs={"tol": 1e-8},
+)
+```
+
+## Reuse of previous solutions
+
+For the classical backend, each accepted solution becomes the initial state guess for the next continuation point automatically:
 
 ```text
-uniform
-left          # clusters near the left endpoint
-quadratic     # backward-compatible alias of left with power=2
-right         # clusters near the right endpoint
-chebyshev     # clusters near both endpoints
+lambda_0 -> solve -> solution_0
+                    |
+                    +--> initial guess for lambda_1
+                              |
+                              +--> initial guess for lambda_2
 ```
 
-For power-law clustering:
+If unknown BVP parameters are present, their solved values can also initialize the next point.
+
+## Adaptive recovery
 
 ```python
-mesh = MeshConfig(n_nodes=80, kind="left", power=3.0)
-```
+from pinns4bvp import ContinuationConfig
 
-Inspect the initial mesh used by a classical solve:
+config = ContinuationConfig(
+    adaptive=True,
+    min_step=1e-3,
+    max_step=0.5,
+    reduction_factor=0.5,
+    max_retries=8,
+    stop_on_failure=False,
+)
 
-```python
-print(sol.metadata["initial_mesh_quality"].summary())
-```
-
-## Better initial guesses
-
-The classical backend accepts several guess forms.
-
-Zeros:
-
-```python
-sol = solve(problem, guess="zeros")
-```
-
-Callable:
-
-```python
-def guess(x):
-    return np.vstack((x * (1 - x), 1 - 2*x))
-
-sol = solve(problem, guess=guess)
-```
-
-Variable mapping:
-
-```python
-sol = solve(
+family = continue_parameter(
     problem,
-    guess={
-        "y": lambda x: x * (1 - x),
-        "yp": 0.0,
-    },
+    "lambda",
+    values,
+    config=config,
 )
 ```
 
-Reuse a previous solution on a different mesh:
+If a requested step fails, v0.7 can insert smaller intermediate points and retry the target from the closest accepted state.
+
+`max_step` can also be used to proactively subdivide a large requested jump.
+
+## SolutionFamily
+
+A continuation returns a structured family rather than a bare list:
 
 ```python
-from pinns4bvp.guess import guess_from_solution
+family.success
+family.values
+family.solutions
+family.requested_results
+family.failed_points
+family.diagnostics
+```
 
-sol1 = solve(problem, n_mesh=30)
-sol2 = solve(
-    problem,
-    n_mesh=100,
-    guess=guess_from_solution(sol1),
+Retrieve a solution at a particular parameter value:
+
+```python
+sol = family.solution_at(1.5)
+```
+
+Track one state quantity at a fixed position:
+
+```python
+parameter_values, response = family.track("y", x=0.5)
+```
+
+Apply an arbitrary scalar function to accepted solutions:
+
+```python
+parameter_values, response = family.evaluate(
+    lambda sol: sol.values("y", 0.5)
 )
 ```
 
-A previous `BVPSolution` may also be supplied directly as `guess=sol1`.
-
-## Independent residual diagnostics
-
-After either a classical or PINN solve:
+Plot profiles:
 
 ```python
-report = sol.residual_report(n_points=301)
-print(report.summary())
+family.plot_profiles("y")
 ```
 
-The diagnostic residual is evaluated independently as
-
-$$
-R(x) = y'(x) - f(x,y,p).
-$$
-
-The report provides:
-
-- global ODE RMS residual;
-- global maximum absolute ODE residual;
-- per-equation RMS and maximum residuals;
-- maximum boundary-condition residual.
-
-A residual plot is available with:
+Plot a tracked quantity:
 
 ```python
-sol.plot_residuals()
+family.plot_track("y", x=0.5)
 ```
 
-## PINN device selection
+## Continuation diagnostics
 
-PINNs4BVP v0.6 supports the following device requests:
+```python
+print(family.diagnostics.summary())
+```
+
+The report includes:
+
+- number of requested values;
+- requested values converged/failed;
+- total solve attempts;
+- intermediate recovery attempts;
+- intermediate accepted points;
+- total solve time.
+
+When enabled, each continuation point may also hold an independent v0.6 residual report:
+
+```python
+point.residual_report
+```
+
+## Fixed continuation parameters versus unknown parameters
+
+These are distinct concepts.
+
+A fixed continuation parameter is deliberately varied:
+
+```python
+parameters={"mu": 1.0}
+```
+
+An unknown parameter is solved as part of the BVP:
+
+```python
+unknown_parameters={"k": UnknownParameter(3.0)}
+```
+
+They may coexist. For example, v0.7 can vary `mu` while solving an eigen-parameter `k` at every continuation point.
+
+```python
+family = continue_parameter(
+    problem,
+    "mu",
+    [1.0, 1.25, 1.5, 2.0],
+)
+
+for point in family.requested_results:
+    if point.accepted:
+        print(point.value, point.solution.parameters["k"])
+```
+
+## PINN continuation and warm starts
+
+For a PINN-enabled problem:
+
+```python
+family = continue_parameter(
+    problem,
+    "lambda",
+    [0.0, 0.5, 1.0],
+    method="pinn",
+    pinn_config=config,
+)
+```
+
+By default v0.7 reuses compatible trained network weights from the previous accepted PINN solution. The solution metadata records this:
+
+```python
+sol.metadata["warm_start_used"]
+```
+
+PINN warm starting can be disabled:
+
+```python
+ContinuationConfig(pinn_warm_start=False)
+```
+
+Because PINN `success` uses a strict residual-based criterion in the current alpha API, advanced users may provide a custom continuation acceptance rule:
+
+```python
+family = continue_parameter(
+    problem,
+    "lambda",
+    values,
+    method="pinn",
+    pinn_config=config,
+    accept_solution=lambda sol: sol.residual_report().ode_rms < 1e-3,
+)
+```
+
+Use such overrides carefully and record the criterion in reproducible studies.
+
+## Device selection
+
+v0.6 device support remains available for PINN continuation:
 
 ```python
 from pinns4bvp.pinn import PINNConfig
@@ -148,110 +262,62 @@ from pinns4bvp.pinn import PINNConfig
 cpu = PINNConfig(device="cpu", dtype="float64")
 cuda = PINNConfig(device="cuda", dtype="float64")
 mps = PINNConfig(device="mps", dtype="float32")
-auto = PINNConfig(device="auto", dtype="float64")
+auto = PINNConfig(device="auto", dtype="float32")
 ```
-
-### CPU
-
-```python
-PINNConfig(device="cpu", dtype="float64")
-```
-
-CPU remains the conservative default for small BVPs and reproducible float64 experiments.
-
-### CUDA
-
-```python
-PINNConfig(device="cuda", dtype="float64")
-```
-
-CUDA is used only when the current PyTorch installation reports it as available. An unavailable explicit CUDA request raises a clear error.
-
-### Apple MPS
-
-```python
-PINNConfig(device="mps", dtype="float32")
-```
-
-MPS is intended for supported Apple Silicon/macOS PyTorch installations. v0.6 deliberately requires float32 for an explicit MPS request rather than assuming float64 MPS support across supported environments.
-
-### Automatic selection
-
-```python
-PINNConfig(device="auto", dtype="float32")
-```
-
-`auto` uses the following policy:
-
-1. CUDA, when available;
-2. MPS, when available and `dtype="float32"`;
-3. CPU otherwise.
-
-For `dtype="float64"`, `auto` prefers CUDA when available and otherwise uses CPU, preserving the requested precision instead of silently changing dtype.
-
-Inspect device availability:
-
-```python
-from pinns4bvp.pinn import available_devices, device_summary
-
-print(available_devices())
-print(device_summary())
-```
-
-A PINN result records both the requested and resolved device:
-
-```python
-print(sol.metadata["device_requested"])
-print(sol.metadata["device_resolved"])
-```
-
-## Unknown parameters and eigenvalue BVPs
-
-v0.5 functionality remains available:
-
-```python
-from pinns4bvp import UnknownParameter
-
-problem = BVPProblem(
-    ...,
-    unknown_parameters={"k": UnknownParameter(initial=3.0)},
-)
-```
-
-Unknown parameters can be solved by both the SciPy collocation and PINN backends.
 
 ## Examples
 
-Run the v0.6 diagnostics example:
+Classical linear continuation:
 
 ```bash
-python -m pinns4bvp.examples.residual_diagnostics
+python -m pinns4bvp.examples.continuation_linear_parameter
 ```
 
-Inspect available PINN devices:
+Nonlinear Bratu continuation:
 
 ```bash
-python -m pinns4bvp.examples.device_selection
+python -m pinns4bvp.examples.continuation_bratu
 ```
 
-Earlier examples remain available, including linear, Bratu, Blasius, benchmarking, and eigenvalue problems.
+Continuation with a simultaneously solved eigen-parameter:
+
+```bash
+python -m pinns4bvp.examples.continuation_eigenvalue
+```
+
+Experimental PINN warm-start continuation:
+
+```bash
+python -m pinns4bvp.examples.pinn_continuation_linear
+```
+
+Earlier examples for benchmarking, residual diagnostics, device selection, eigenvalue BVPs, Bratu, Blasius, and linear problems remain available.
 
 ## Testing
 
 ```bash
-pytest -v
+python -m pytest -v
 ```
 
-The v0.6 development suite includes regression tests for all earlier capabilities plus mesh generation, interpolated/reused guesses, residual diagnostics, and device selection.
+The v0.7 suite retains all earlier regression tests and adds tests for:
+
+- basic continuation;
+- family tracking;
+- original-problem immutability;
+- continuation with unknown parameters;
+- adaptive step recovery;
+- PINN model warm-start mechanics.
 
 ## Current limitations
 
-- Classical callbacks use NumPy while PINN callbacks are PyTorch-native in the current alpha API.
-- Unknown parameters are scalar and unconstrained.
-- `mps` is intentionally restricted to `float32` in v0.6.
-- Availability of CUDA/MPS depends on the installed PyTorch build and host hardware.
-- Device-specific numerical trajectories can differ even with identical seeds.
-- This release does not yet implement adaptive continuation or higher-order equation syntax.
+- v0.7 implements **natural continuation in one fixed scalar parameter**.
+- Requested continuation values must be strictly monotonic.
+- Full pseudo-arclength continuation is not implemented.
+- Turning-point detection and automatic bifurcation classification are not implemented.
+- PINN warm starting is experimental and requires a compatible network architecture.
+- Classical callbacks remain NumPy-based while PINN callbacks are PyTorch-native in the current alpha API.
+- Unknown parameters remain scalar and unconstrained.
+- CUDA/MPS availability depends on the installed PyTorch build and host hardware.
 
 ## License
 

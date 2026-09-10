@@ -6,14 +6,18 @@ from __future__ import annotations
 class PINNUnknownParameterSet:
     """Small container of scalar ``torch.nn.Parameter`` objects."""
 
-    def __init__(self, problem, *, dtype, device):
+    def __init__(self, problem, *, dtype, device, initial_values=None):
         import torch
 
         self.names = problem.unknown_parameter_names
+        initial_values = {} if initial_values is None else dict(initial_values)
+        extra = [name for name in initial_values if name not in self.names]
+        if extra:
+            raise ValueError(f"unexpected unknown parameter initial values: {extra}")
         self._values = [
             torch.nn.Parameter(
                 torch.tensor(
-                    problem.unknown_parameters[name].initial,
+                    initial_values.get(name, problem.unknown_parameters[name].initial),
                     dtype=dtype,
                     device=device,
                 )

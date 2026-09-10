@@ -21,6 +21,7 @@ def solve(
     *,
     method: str = "collocation",
     pinn_config=None,
+    pinn_warm_start=None,
     mesh: np.ndarray | MeshConfig | None = None,
     n_mesh: int = 50,
     mesh_kind: str = "uniform",
@@ -46,7 +47,9 @@ def solve(
     if method in {"pinn", "torch"}:
         from pinns4bvp.backends.pinn_backend import solve_with_pinn
 
-        solution = solve_with_pinn(problem, config=pinn_config)
+        solution = solve_with_pinn(
+            problem, config=pinn_config, warm_start=pinn_warm_start
+        )
         if raise_on_failure and not solution.success:
             raise RuntimeError(solution.summary())
         return solution

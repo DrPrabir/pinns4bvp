@@ -1,50 +1,55 @@
-# PINNs4BVP v0.6 development notes
+# PINNs4BVP v0.7 development notes
 
-v0.6 is a reliability and usability release. It deliberately does not add a new mathematical problem class. Instead it improves the infrastructure needed before parameter continuation and advanced BVP formulations.
+## Scope
 
-## Mesh design
+v0.7 adds natural one-parameter continuation and solution-family management while retaining the general-purpose BVP design.
 
-The classical backend continues to rely on the underlying adaptive collocation solver after initialization. v0.6 improves the **initial** mesh only. `MeshConfig` provides reproducible mesh definitions and the solver records a `MeshQualityReport` in solution metadata.
+The continuation parameter must be a fixed scalar in `problem.parameters`. Unknown parameters introduced in v0.5 are solved at every continuation point and may be initialized from the preceding accepted solution.
 
-The supported initial mappings are intentionally generic: uniform, one-sided power clustering, and cosine/Chebyshev-style endpoint clustering.
+## Core continuation objects
 
-## Guess design
+- `ContinuationConfig`: stepping, retry, residual, and warm-start policy.
+- `ContinuationPoint`: one attempted parameter value and its solver outcome.
+- `SolutionFamily`: requested values, all attempts, accepted solutions, tracking, plotting, and diagnostics.
+- `continue_parameter(...)`: orchestration function.
 
-`create_initial_guess(...)` now accepts previous solutions and interpolated source data. This is intentionally useful for the upcoming continuation release: a converged solution can be transferred to a different initial mesh without application-specific logic.
+## Classical continuation
 
-No attempt is made to infer a universal "physical" automatic guess from boundary conditions, because such inference is not reliable for general nonlinear BVPs.
+For an accepted classical solution, the complete state is reused through the v0.6 previous-solution guess mechanism. This is backend-independent at the `BVPSolution` level and avoids exposing SciPy internals.
 
-## Residual diagnostics
+## Adaptive recovery
 
-`ResidualReport` evaluates
+v0.7 uses natural continuation rather than pseudo-arclength continuation. When a target fails and an accepted source solution exists, the interval is reduced according to `reduction_factor` until the target can be approached or retry/minimum-step limits are reached.
 
-$$
-y'(x)-f(x,y,p)
-$$
+An optional `max_step` proactively inserts intermediate points before a large jump.
 
-using the backend-independent solution evaluator. The diagnostic is separate from SciPy's internal residual estimates and from the PINN training loss. This distinction is useful for cross-backend verification.
+All attempts are recorded; `SolutionFamily.requested_results` reports the final outcome for each user-requested value.
 
-The classical NumPy callback is used to evaluate the right-hand side even for a PINN solution, providing an independent post-training check.
+## Unknown parameters during continuation
 
-## Device policy
+The fixed continuation parameter and unknown BVP parameters are deliberately distinct. At each new point, unknown-parameter initial values may be replaced by the values recovered from the preceding accepted solution. The original `BVPProblem` is never mutated.
 
-The public PINN choices are `cpu`, `cuda`, `mps`, and `auto`.
+## PINN warm starts
 
-- CPU always resolves when PyTorch is installed.
-- CUDA requires `torch.cuda.is_available()`.
-- MPS requires a PyTorch build with an available MPS backend.
-- Explicit MPS uses float32 in v0.6; float64 MPS is deliberately not assumed.
-- `auto + float32`: CUDA -> MPS -> CPU.
-- `auto + float64`: CUDA -> CPU.
+v0.7 extends the PINN backend with an optional `pinn_warm_start` solution. Compatible network `state_dict` values are copied into a newly constructed model after device/dtype resolution. Solved unknown parameters are also reused as initial trainable values.
 
-This policy avoids silently reducing requested precision.
+This keeps each continuation point as an independent `BVPSolution` while allowing efficient neural continuation.
 
-Device availability is an execution-environment property; tests therefore verify the selection logic without requiring CUDA or MPS hardware.
+Warm starts require the same domain, number of equations, and compatible network architecture.
 
-## Deliberate limitations
+## Acceptance policy
 
-- No automatic adaptive initial-mesh optimizer beyond the backend's existing adaptive collocation process.
-- No data-driven inverse-problem API.
-- No full branch continuation yet.
-- No symbolic/higher-order equation parser.
-- No automatic dtype conversion to make MPS requests succeed.
+By default a continuation point is accepted only when `solution.success` is true. This is intentionally conservative. A custom `accept_solution(solution)` callback is available for experimental PINN studies with explicitly documented residual criteria.
+
+## Deliberate v0.7 limitations
+
+v0.7 does not implement:
+
+- pseudo-arclength continuation;
+- automatic fold/turning-point traversal;
+- bifurcation classification;
+- stability analysis;
+- two-parameter continuation surfaces;
+- automatic branch switching.
+
+These capabilities require a more specialized continuation formulation and are intentionally outside this release.

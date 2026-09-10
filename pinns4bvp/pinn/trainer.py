@@ -60,8 +60,13 @@ def _gradient_norm(parameters) -> float:
     return float(torch.sqrt(sq))
 
 
-def train_pinn(problem, model, config) -> PINNTrainingResult:
-    """Train ``model`` and any unknown scalar parameters simultaneously."""
+def train_pinn(problem, model, config, *, warm_start_state=None, unknown_initial=None) -> PINNTrainingResult:
+    """Train ``model`` and any unknown scalar parameters simultaneously.
+
+    ``warm_start_state`` may contain a compatible PyTorch ``state_dict`` from
+    a previous PINN solution. ``unknown_initial`` may override initial values
+    of unknown BVP parameters, which is useful during continuation.
+    """
 
     import torch
 
@@ -70,7 +75,16 @@ def train_pinn(problem, model, config) -> PINNTrainingResult:
     resolved_device = resolve_device(config.device, dtype=config.dtype)
     device = torch.device(resolved_device)
     model = model.to(device=device, dtype=dtype)
-    unknown = PINNUnknownParameterSet(problem, dtype=dtype, device=device)
+    if warm_start_state is not None:
+        try:
+            model.load_state_dict(warm_start_state, strict=True)
+        except RuntimeError as exc:
+            raise ValueError(
+                "PINN warm start is incompatible with the current network architecture"
+            ) from exc
+    unknown = PINNUnknownParameterSet(
+        problem, dtype=dtype, device=device, initial_values=unknown_initial
+    )
     x_collocation = _make_collocation(problem, config, device=resolved_device)
     history = PINNTrainingHistory()
 
